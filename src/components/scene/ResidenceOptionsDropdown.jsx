@@ -120,10 +120,10 @@ Write one short narrative sentence (1 sentence) describing what happens. Keep it
 
   return (
     <>
-    <div className="relative" ref={ref}>
+    <div className="relative flex-shrink-0" ref={ref}>
       <button
         onClick={() => setOpen(v => !v)}
-        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-medium transition-colors ${
+        className={`flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-xl border text-xs font-medium transition-colors flex-shrink-0 ${
           open
             ? "bg-primary/10 border-primary/40 text-primary"
             : "bg-secondary border-border text-muted-foreground hover:text-foreground"
@@ -131,7 +131,8 @@ Write one short narrative sentence (1 sentence) describing what happens. Keep it
         title="Residence Options"
       >
         <Home className="w-3.5 h-3.5" />
-        <span>Residence</span>
+        {/* A narrow header keeps this control as its icon: the location name needs the room. */}
+        <span className="hidden sm:inline">Residence</span>
         <ChevronDown className={`w-3 h-3 transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
 

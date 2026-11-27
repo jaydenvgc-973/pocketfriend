@@ -55,7 +55,7 @@ export default function ObserveStageControls({ candidates, castIds, onToggleCast
   return (
     // The strip can grow taller than the screen on a phone; it scrolls rather than
     // pushing its own buttons below the viewport, and keeps the home indicator clear.
-    <div className="border-t border-border bg-card/60 flex-shrink-0 max-h-[62dvh] overflow-y-auto pb-[env(safe-area-inset-bottom)]">
+    <div className="border-t border-border bg-card/60 flex-shrink-0 max-h-[34dvh] sm:max-h-[62dvh] overflow-y-auto overscroll-contain pb-[env(safe-area-inset-bottom)]">
       <div className="flex items-center gap-1.5 px-3 pt-2 text-[10px] text-muted-foreground">
         <Eye className="w-3 h-3" />
         <span>You are not in the scene. No one here can see or hear you.</span>

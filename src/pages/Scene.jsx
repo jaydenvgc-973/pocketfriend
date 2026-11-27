@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import ScenePhotoModal from "@/components/travel/ScenePhotoModal";
 import SceneMediaArea from "@/components/scene/SceneMediaArea";
+import { useSceneViewportHeight } from "@/hooks/useSceneViewportHeight";
 import { filterDashes } from "@/lib/dashFilter";
 import { isCharacterAtWork } from "@/lib/workScheduleUtils";
 import { getPrivateSpaceOccupantIds } from "@/lib/sceneImmediateArea";
@@ -185,6 +186,8 @@ export default function Scene() {
   const [showSharedConversation, setShowSharedConversation] = useState(false);
   const bottomRef = useRef(null);
   const npcDropdownRef = useRef(null);
+  // While the keyboard is open the screen is shorter: Scenes follows the visible area.
+  const keyboardViewportHeight = useSceneViewportHeight();
   const narratorModeRef = useRef(narratorMode);
   const sendMessageRef = useRef(null);
   const sendNarrationRef = useRef(null);
@@ -224,12 +227,7 @@ export default function Scene() {
   // Regular NPCs are present in the world like anyone else, so they appear in Who's Here.
   // They are never auto-added to the cast: being here is not being selected. The
   // household's assigned caregiver is the exception — supervision already selects them.
-  const regularNpcIds = useMemo(
-    () => new Set((npcRegular || []).filter((c) => !isCaregiverOnDuty(c, location?.id)).map((c) => c.id)),
-    [npcRegular, location?.id]
-  );
-
-
+  const regularNpcIds = useMemo(() => new Set((npcRegular || []).filter((c) => !isCaregiverOnDuty(c, location?.id)).map((c) => c.id)), [npcRegular, location?.id]);
 
   // ── SHARED RESIDENCE ──
   // A deliberately shared residential property supports the same cross-account
@@ -2271,19 +2269,19 @@ export default function Scene() {
   const shoppingRecipients = accountRecipients(characters, currentUser?.email);
 
   return (
-    <div className="flex flex-col bg-background" style={{ height: '100dvh' }}>
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-background/80 backdrop-blur-xl flex-shrink-0 relative z-50">
-        <button onClick={() => observeMode ? navigate("/travel") : setShowLeaveModal(true)} className="p-2 rounded-xl text-muted-foreground hover:text-foreground transition-colors flex-shrink-0" title={observeMode ? "Stop watching" : "Leave location"}><ArrowLeft className="w-5 h-5" /></button>
-        <div className="flex-1 min-w-0"><h2 className="text-sm font-bold text-foreground truncate">{location.name}</h2><p className="text-xs text-muted-foreground capitalize">{CATEGORY_EMOJIS[location.category]} {location.category?.replace("_", " ")} · {observeMode ? "watching · " : ""}{activeUnit ? `${getUnitLabel(activeUnit.unit_name, location)} · ` : ""}{new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })}</p></div>
+    <div className="flex flex-col bg-background overflow-hidden w-full" style={{ height: keyboardViewportHeight ? `${keyboardViewportHeight}px` : '100dvh' }}>
+      <div className="flex items-center gap-1.5 sm:gap-3 px-2 sm:px-4 py-2 sm:py-3 border-b border-border bg-background/80 backdrop-blur-xl flex-shrink-0 relative z-50">
+        <button onClick={() => observeMode ? navigate("/travel") : setShowLeaveModal(true)} className="p-1.5 sm:p-2 rounded-xl text-muted-foreground hover:text-foreground transition-colors flex-shrink-0" title={observeMode ? "Stop watching" : "Leave location"}><ArrowLeft className="w-5 h-5" /></button>
+        <div className="flex-1 min-w-0"><h2 className="text-sm font-bold text-foreground truncate">{location.name}</h2><p className="text-[11px] sm:text-xs text-muted-foreground capitalize truncate">{CATEGORY_EMOJIS[location.category]} {location.category?.replace("_", " ")} · {observeMode ? "watching · " : ""}{activeUnit ? `${getUnitLabel(activeUnit.unit_name, location)} · ` : ""}{new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })}</p></div>
         {isHomeLocation && !observeMode && (!isSharedLocation || isGatewayHouse) && <ResidenceOptionsDropdown location={location} sceneCharacters={sceneCharacters} isResident={broughtCharacters.some((c) => c.current_home_location_id === location.id)} currentUser={currentUser} allCharacters={characters} onTour={() => setShowTourModal(true)} onMoveIn={() => setShowMoveInPopup(true)} onMoveOut={handleMoveOut} onAskToLeave={handleAskToLeave} onCharacterPulledHome={() => queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] })} onKickOut={() => setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: "You assert your authority and ask them to leave immediately.", timestamp: new Date().toISOString() }])} />}
         {!observeMode && isSharedResidence && sharedResidenceParticipants.length > 1 && (
           <button onClick={() => { setShowSharedConversation(true); setUserLocation(location.id, location.name).then(() => queryClient.invalidateQueries({ queryKey: ["sharedResidenceParticipants", location.id] })).catch(() => {}); }} className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-primary/10 border border-primary/40 text-primary text-xs font-medium flex-shrink-0" title="Talk with everyone here">
             <UsersIcon className="w-3.5 h-3.5" />{sharedResidenceParticipants.length}
           </button>
         )}
-        <div ref={npcDropdownRef}><WhosHereDropdown presentParticipants={sceneParticipants} candidateNpcs={selectableNpcCandidates} selectedNpcs={selectedNpcs} onToggleNpc={toggleNpc} showDropdown={showNpcDropdown} onToggleDropdown={setShowNpcDropdown} onInviteClick={() => { setShowNpcDropdown(false); setShowInviteModal(true); }} renderNpc={renderNpc} residentialUnits={location?.residential_units || []} locationCategory={location?.category} /></div>
-        <button onClick={() => setShowPhotoModal(true)} className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors" title="Scene photo"><Camera className="w-4 h-4" /></button>
-        <button onClick={() => setWatchVideoActive((v) => !v)} className={`p-2 rounded-xl transition-colors ${watchVideoActive ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"}`} title="Watch Video"><Tv className="w-4 h-4" /></button>
+        <div ref={npcDropdownRef} className="flex-shrink-0"><WhosHereDropdown presentParticipants={sceneParticipants} candidateNpcs={selectableNpcCandidates} selectedNpcs={selectedNpcs} onToggleNpc={toggleNpc} showDropdown={showNpcDropdown} onToggleDropdown={setShowNpcDropdown} onInviteClick={() => { setShowNpcDropdown(false); setShowInviteModal(true); }} renderNpc={renderNpc} residentialUnits={location?.residential_units || []} locationCategory={location?.category} /></div>
+        <button onClick={() => setShowPhotoModal(true)} className="p-1.5 sm:p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors flex-shrink-0" title="Scene photo"><Camera className="w-4 h-4" /></button>
+        <button onClick={() => setWatchVideoActive((v) => !v)} className={`p-1.5 sm:p-2 rounded-xl flex-shrink-0 transition-colors ${watchVideoActive ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"}`} title="Watch Video"><Tv className="w-4 h-4" /></button>
       </div>
 
       <ImageLightbox src={lightboxSrc} alt={location.name} onClose={() => setLightboxSrc(null)} />

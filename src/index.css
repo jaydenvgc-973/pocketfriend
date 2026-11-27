@@ -88,6 +88,27 @@
   }
 }
 
+/* Scenes picture area — a share of the height that always leaves the conversation its
+   room. A phone keeps a smaller picture so the header, strip and controls all fit on
+   screen; a tablet and desktop keep the established proportion. */
+/* The share is taken from the Scenes screen itself, so it also gives way when the
+   keyboard or browser chrome reduces the visible height. */
+.scene-media-area {
+  height: 26%;
+}
+@media (min-width: 768px) and (min-height: 640px) {
+  .scene-media-area {
+    height: 40%;
+  }
+}
+/* A landscape phone has very little height: the picture keeps its share small so the
+   conversation, the activity strip and the message field all stay on screen. */
+@media (max-height: 500px) {
+  .scene-media-area {
+    height: 16%;
+  }
+}
+
 /* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 4px;

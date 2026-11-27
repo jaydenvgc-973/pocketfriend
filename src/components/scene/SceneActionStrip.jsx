@@ -244,13 +244,13 @@ export default function SceneActionStrip({
   };
 
   return (
-    <div className="px-3 py-2 border-t border-border bg-card/50 flex-shrink-0 overflow-hidden">
+    <div className="px-2 sm:px-3 py-1.5 sm:py-2 border-t border-border bg-card/50 flex-shrink-0 overflow-hidden">
       {/* ONE horizontal strip: the folder cards sit inside it beside the activity cards they
           open, and Next Scene stays pinned at its right end. */}
-      <div className="flex items-stretch gap-1.5">
+      <div className="flex items-stretch gap-1 sm:gap-1.5">
         {/* A fixed strip height: opening or closing a folder only adds or removes cards in
             this one row, it never resizes the strip or the cards already in it. */}
-        <div ref={stripRef} className="flex items-stretch gap-1.5 overflow-x-auto snap-x snap-mandatory scrollbar-hide flex-1 min-w-0 min-h-[78px]">
+        <div ref={stripRef} className="flex items-stretch gap-1 sm:gap-1.5 overflow-x-auto snap-x snap-mandatory scrollbar-hide flex-1 min-w-0 min-h-[78px]">
           {/* Open Phone is the strip's first option: outside every folder, always reachable,
               and opening the phone changes nothing about the scene. */}
           <OpenPhoneControl onClick={() => onOpenPhone?.()} />

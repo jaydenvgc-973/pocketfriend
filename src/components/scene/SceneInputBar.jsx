@@ -39,9 +39,9 @@ function SceneInputBar({ inputText, setInputText, narratorMode, setNarratorMode,
   }, [setNarratorMode]);
 
   return (
-    <div className="border-t border-border flex-shrink-0 px-4 pb-4 pt-2">
+    <div className="border-t border-border flex-shrink-0 px-3 sm:px-4 pt-1.5 sm:pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:pb-4">
       {/* Mode toggle — mouseDown prevents focus theft */}
-      <div className="flex gap-1 pb-2">
+      <div className="flex gap-1 pb-1.5 sm:pb-2">
         <button
           onMouseDown={handleModeSwitch(false)}
           onClick={(e) => e.preventDefault()}
@@ -79,7 +79,7 @@ function SceneInputBar({ inputText, setInputText, narratorMode, setNarratorMode,
           onKeyDown={handleKeyDown}
           placeholder={narratorMode ? "Describe the scene..." : "Say something..."}
           rows={1}
-          className={`flex-1 bg-transparent text-foreground text-sm resize-none outline-none px-1 py-2 max-h-32 placeholder:text-muted-foreground${narratorMode ? " italic" : ""}`}
+          className={`flex-1 bg-transparent text-foreground text-sm resize-none outline-none px-1 py-2 max-h-24 sm:max-h-32 placeholder:text-muted-foreground${narratorMode ? " italic" : ""}`}
           style={{ minHeight: "40px" }}
           autoComplete="off"
           autoCorrect="off"

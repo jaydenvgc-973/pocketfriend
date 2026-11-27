@@ -62,7 +62,7 @@ export default function SceneMediaArea({
   // Watch video takes priority — it's independent of collapse
   if (watchVideoActive) {
     return (
-      <div className="relative flex-shrink-0" style={{ zIndex: 0, height: "40dvh" }}>
+      <div className="relative flex-shrink-0 scene-media-area" style={{ zIndex: 0 }}>
         <WatchVideoPanel
           onClose={() => { onToggleWatchVideo?.(); }}
           onStarted={(ctx) => { onWatchStarted?.(ctx); }}
@@ -94,7 +94,7 @@ export default function SceneMediaArea({
 
   // Expanded image area
   return (
-    <div className="relative flex-shrink-0" style={{ zIndex: 0, height: "40dvh" }}>
+    <div className="relative flex-shrink-0 scene-media-area bg-secondary" style={{ zIndex: 0 }}>
       {isGeneratingImage ? (
         <div className="w-full h-full bg-secondary flex items-center justify-center">
           <div className="flex items-center gap-2 text-muted-foreground">
@@ -104,7 +104,9 @@ export default function SceneMediaArea({
         </div>
       ) : sceneImage ? (
         <button onClick={() => onLightbox?.(sceneImage)} className="w-full h-full block group relative">
-          <img src={sceneImage} alt={location.name} className="w-full h-full object-cover" style={{ imageOrientation: 'from-image' }} />
+          {/* The whole picture, never a crop: the generated composition keeps its own
+              proportions and the unused space around it stays part of the frame. */}
+          <img src={sceneImage} alt={location.name} className="w-full h-full object-contain" style={{ imageOrientation: 'from-image' }} />
           <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
             <ZoomIn className="w-6 h-6 text-white drop-shadow" />
           </div>
@@ -148,7 +150,7 @@ export default function SceneMediaArea({
                 className="absolute left-0 top-full mt-1 bg-card border border-border rounded-xl shadow-xl overflow-y-auto overscroll-contain min-w-[140px] z-[200]"
                 // Eight rows visible at once; the list scrolls inside this bound and never
                 // reaches down over the conversation and the controls below it.
-                style={{ maxHeight: "min(288px, calc(40dvh - 56px))" }}
+                style={{ maxHeight: "min(288px, 45dvh)" }}
               >
                 {locationZones.map((zone) => (
                   <button

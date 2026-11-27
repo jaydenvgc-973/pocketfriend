@@ -103,7 +103,7 @@ export default function WhosHereDropdown({
     <div className="relative z-50">
       <button
         onClick={() => onToggleDropdown(!showDropdown)}
-        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-medium transition-colors ${
+        className={`flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-xl border text-xs font-medium transition-colors flex-shrink-0 ${
           selectedNpcs.length > 0
             ? "bg-primary/10 border-primary/40 text-primary"
             : "bg-secondary border-border text-muted-foreground hover:text-foreground"
@@ -111,7 +111,10 @@ export default function WhosHereDropdown({
         title="NPCs nearby"
       >
         <Users className="w-3.5 h-3.5" />
-        <span>Who's here{selectedNpcs.length > 0 ? ` · ${selectedNpcs.length}` : ""}</span>
+        {/* A narrow header keeps the same control as its icon and count: the words give way
+            to the room the location name and metadata need. */}
+        <span className="hidden sm:inline">Who's here</span>
+        {selectedNpcs.length > 0 && <span className="font-bold">{selectedNpcs.length}</span>}
         <ChevronDown className={`w-3 h-3 transition-transform ${showDropdown ? "rotate-180" : ""}`} />
       </button>
 

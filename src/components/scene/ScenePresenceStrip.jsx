@@ -23,7 +23,7 @@ export default function ScenePresenceStrip({
     .filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i);
 
   return (
-    <div className="flex items-center gap-2 px-4 py-2 border-b border-border bg-card/50 flex-shrink-0 overflow-x-auto scrollbar-hide">
+    <div className="flex items-center gap-2 px-2 sm:px-4 py-1.5 sm:py-2 border-b border-border bg-card/50 flex-shrink-0 overflow-x-auto scrollbar-hide">
       {(locationUnits.length > 0 || locationWorkplaces.length > 0) && (
         <>
           <ApartmentSwitcher units={locationUnits} workspaces={locationWorkplaces} activeUnitId={activeUnitId} onSelect={onSelectUnit} location={location} allowNone />
