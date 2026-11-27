@@ -14,7 +14,7 @@ import { buildAppearanceLockBlock } from "@/lib/appearanceLockValidator";
 import { getBackgroundPopulationDiversityDirective } from "@/lib/imageDiversityConstraints";
 import { getEasternLightingDescriptor, buildZoneLockEnvNote, buildActionEnvNote, buildFacilityEnvNote, buildTimeOfDayLock, resolveExistingObjectCueForZone, buildPhysicalSettingNote } from "@/lib/sceneImagePromptBuilder";
 import { physicalSettingFor } from "@/lib/physicalSetting";
-import { isUnhousedLivingSpace, buildUnhousedSpaceRule } from "@/lib/unhousedLivingSpace";
+import { isUnhousedSpaceAt, buildUnhousedSpaceRule } from "@/lib/unhousedLivingSpace";
 import { resolveEstablishedAccommodations, buildSleepAccommodationRule } from "@/lib/sceneAccommodations";
 import { isCharacterAsleep } from "@/lib/sleepUtils";
 import { dedupeSceneCast } from "@/lib/sceneCastUniqueness";
@@ -154,6 +154,9 @@ export function useSceneImageGenerator({ transcript = [] } = {}) {
     const sceneZoneName = resolveSceneZone(location, activeZone);
     const currentZoneForAction = locationZones.find((z) => z.zone_name === sceneZoneName) || null;
     const activeZoneImagesForAction = currentZoneForAction?.image_urls || [];
+    // The space being pictured decides whether this is an unhoused arrangement. A city that
+    // also holds a tent is not itself a tent, and its apartments are ordinary interiors.
+    const unhousedSpace = isUnhousedSpaceAt(location, currentZoneForAction?.zone_name);
     // A picture taken somewhere other than the selected place — inside a car during a ride —
     // is composed from that environment's own references only. The selected zone's room
     // images are never supplied beside them, which is what put a living room into a car.
@@ -281,11 +284,11 @@ export function useSceneImageGenerator({ transcript = [] } = {}) {
         // composed as a car cabin, never as a furnished living space.
         // An encampment is not a home interior: no furnished living space is ever composed
         // around people sleeping in a tent or under a bridge.
-        if (isHomeLocation && !environmentRefsOverride && !isUnhousedLivingSpace(location)) {
+        if (isHomeLocation && !environmentRefsOverride && !unhousedSpace) {
           finalPrompt += buildResidentialImageConstraint(location, finalParticipants);
         }
         // The same picture is never furnished into a home. Only what the place has.
-        if (isUnhousedLivingSpace(location)) {
+        if (unhousedSpace) {
           finalPrompt += buildUnhousedSpaceRule({ zoneName: currentZoneForAction?.zone_name });
         }
       }
@@ -343,7 +346,7 @@ export function useSceneImageGenerator({ transcript = [] } = {}) {
         `STRICT RULE: The ONLY people who may appear are: ${visibleNames.join(", ")}. No other residents, no unselected family members, no NPCs. ONLY those named above.` :
         `STRICT RULE: This space is completely empty — nobody is present. Do not render any people, no silhouettes, no background figures. Empty room only.`;
       // A place someone stays without housing is never rendered as a furnished home.
-      const unhousedHome = isUnhousedLivingSpace(location);
+      const unhousedHome = unhousedSpace;
       // An outdoor zone of a property (a yard, a street front, a lot) is not a furnished interior:
       // the designated setting outranks the assumption that a home is always rooms.
       const outdoorZone = physicalSettingFor(location, currentZoneForAction?.zone_name) === 'outdoor';

@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import ApartmentManager from "@/components/location/ApartmentManager";
 import UnhousedLivingSpacesSection from "@/components/location/UnhousedLivingSpacesSection";
-import { isUnhousedLivingSpace, hasHousedVenueType } from "@/lib/unhousedLivingSpace";
+import { isUnhousedLivingSpace, hasHousedVenueType, isUnhousedResidenceUnit } from "@/lib/unhousedLivingSpace";
 import { lockedRecoveryYardZoneNames } from "@/lib/recoveryYardZones";
 import { getActiveUnitOccupantIds, sortUnits, isEligibleSchoolHousingResident } from "@/lib/residentialUnits";
 
@@ -43,9 +43,12 @@ export default function ResidentialUnitsSections({
 
   const isUnhoused = isUnhousedLivingSpace(form);
   const hasHousedVenue = hasHousedVenueType(form);
-  // A space saved before the kind was recorded belongs to the location's own kind, so an
-  // existing Unhoused Living Space keeps its living spaces after this correction.
-  const isUnhousedUnit = (unit) => unit?.living_space_kind === 'unhoused_living_space' || (!unit?.living_space_kind && isUnhoused && !hasHousedVenue);
+  // Every space is classified by its own record — an apartment is a housed residence and a
+  // tent is an unhoused arrangement, even when both sit inside the same city. A space saved
+  // before either was recorded falls back to the location's own kind, and only when the
+  // location is wholly an unhoused living space.
+  const isUnhousedUnit = (unit) => isUnhousedResidenceUnit(editingLocation || form, unit);
+  const hasUnhousedUnits = (form.residential_units || []).some(isUnhousedUnit);
 
   const setHousedUnits = (units) => setForm(p => ({ ...p, residential_units: [...units, ...(p.residential_units || []).filter(isUnhousedUnit)] }));
   const setUnhousedUnits = (units) => setForm(p => ({ ...p, residential_units: [...(p.residential_units || []).filter(u => !isUnhousedUnit(u)), ...units] }));
@@ -166,7 +169,7 @@ export default function ResidentialUnitsSections({
       )}
 
       {/* Outdoor living arrangements are their own section, never part of the list above. */}
-      {isUnhoused && genericAllows('outdoor') && (
+      {(isUnhoused || hasUnhousedUnits) && (genericAllows('outdoor') || hasUnhousedUnits) && (
         <UnhousedLivingSpacesSection
           units={(form.residential_units || []).filter(isUnhousedUnit)}
           residentCharacterIds={unhousedEligibleIds}

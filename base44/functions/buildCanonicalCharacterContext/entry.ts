@@ -31,6 +31,7 @@
 
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 import { buildInternalFamilyTruth, buildFamilySection, buildFavoritesBlock } from './promptBlocks.ts';
+import { isUnhousedPlace, homeIsStructuralPlace } from './housingTruth.ts';
 
 // ── INLINE HELPERS ────────────────────────────────────────────────────────────
 // Deno functions cannot import local lib files — all helpers are inlined.
@@ -498,17 +499,8 @@ function getWorkScheduleState(character, now = new Date()) {
 // ── WHERE SOMEONE STAYS IS NOT ALWAYS A HOUSE ────────────────────────────────
 // A place under a bridge, a tent, an encampment or a park is real and it is theirs,
 // but it is not a building. These two checks decide only how it may be described.
-function isUnhousedPlace(loc) {
-  const t = loc?.subtype, list = Array.isArray(t) ? t : [t];
-  return list.filter(Boolean).some(v => String(v).toLowerCase() === 'unhoused_living_space');
-}
-function homeIsStructuralPlace(loc) {
-  if (!loc || isUnhousedPlace(loc)) return false;
-  if (['home', 'hotel', 'shelter'].includes(loc.category || '')) return true;
-  if ((loc.residential_units || []).length > 0) return true;
-  const types = [...(loc.venue_types || []), ...(Array.isArray(loc.subtype) ? loc.subtype : [loc.subtype])].join(' ').toLowerCase().replace(/_/g, ' ');
-  return /(^|\s)(house|apartment|condo|building|residence|dorm|townhouse|duplex|mobile home|trailer)(\s|$)/.test(types);
-}
+// Both checks read the space the character actually lives in, and are shared with the
+// Places page so a city's apartment is never described as an encampment: ./housingTruth.ts
 
 function buildHardFacts(character, hasActiveStoryEvent = false) {
   const lines = [];
@@ -548,7 +540,7 @@ function buildHardFacts(character, hasActiveStoryEvent = false) {
   // Having somewhere to sleep, having a regular spot, and being housed are three
   // different things. An established place to stay is stated as what it is.
   const homePlace = character.home_place || null;
-  if (isUnhousedPlace(homePlace) && homePlace?.name) {
+  if (isUnhousedPlace(homePlace, character) && homePlace?.name) {
     lines.push(`YOUR PLACE TO STAY — ${homePlace.name}: this is where you sleep, keep your things and return to. You may call it your spot, your area, your corner, your camp, where you stay, where you sleep, or home, and you may use its name. You are still without stable housing: having somewhere to sleep is not having a house.`);
   }
   // Several people can stay in the same place and still have their own separate spot.
@@ -558,7 +550,7 @@ function buildHardFacts(character, hasActiveStoryEvent = false) {
       lines.push(`YOUR OWN SPACE THERE: ${ownUnit.unit_name}${ownUnit.zone_name ? ` (${ownUnit.zone_name})` : ''}. That is your spot, separate from anyone else staying at ${homePlace.name}. Do not assume you share another person's tent, sleeping place or belongings.`);
     }
   }
-  if (homePlace && !homeIsStructuralPlace(homePlace)) {
+  if (homePlace && !homeIsStructuralPlace(homePlace, character)) {
     lines.push(`HOME IS A PLACE, NOT A BUILDING — ${homePlace.name} has no house, apartment, bedroom, living room, kitchen, bathroom or upstairs unless the zone you are in actually establishes one. ⛔ Never say "my house", "my apartment", "my bedroom", "I'm upstairs", "my living room" or "my kitchen" about it. Say your spot, where you stay, where you sleep, your camp, or its name. Going home is always allowed and never implies a building.`);
   }
   // Another person's living arrangement is described only as what is actually established.
@@ -611,7 +603,7 @@ function buildHardFacts(character, hasActiveStoryEvent = false) {
     // Read committed canonical state — no independent schedule override.
     // Where they are asleep decides what they are asleep ON. Nothing is added for them.
     const sleepPlace = character.current_place || character.home_place || null;
-    lines.push(isUnhousedPlace(sleepPlace)
+    lines.push(isUnhousedPlace(sleepPlace, character)
       ? "SLEEP STATE: CURRENTLY ASLEEP. Do not generate awake behavior, movement, or conversation. You are asleep on what is actually there — the ground, cardboard, a blanket, a sleeping bag, a mattress, inside a tent, on a bench, or in a chair. ⛔ There is no bed, no bedroom and no indoor room here: never describe waking in a bed, getting out of bed, or walking into a kitchen."
       : "SLEEP STATE: CURRENTLY ASLEEP. Do not generate awake behavior, movement, or conversation.");
   }

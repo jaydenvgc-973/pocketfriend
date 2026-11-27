@@ -18,7 +18,7 @@ import { resolveHousingLocationForCharacter } from '@/lib/resolveHousingLocation
 import { isCharacterAsleep as isCharacterAsleepFromUtils, isNPCCharacterType } from '@/lib/sleepUtils';
 import { getCharacterSleepState } from '@/lib/characterSleepState';
 import { detectUnsupportedFormat } from '@/lib/imageFormatValidator';
-import { isUnhousedLivingSpace } from '@/lib/unhousedLivingSpace';
+import { isUnhousedLivingSpace, isUnhousedSpaceForCharacter } from '@/lib/unhousedLivingSpace';
 import { hasVerifiedSchoolEnrollment, resolveSchoolSchedule } from '@/lib/schoolScheduleResolver';
 
 /**
@@ -1462,7 +1462,7 @@ export function buildLiveLocationContext(character, locationMap = {}, imageMode 
   if (presence === 'sleeping' || presence === 'napping') {
     // Somewhere a character stays without housing is not a bedroom. They sleep on what is
     // actually there — a tent floor, cardboard, a blanket, a bench, the ground.
-    if (isUnhousedLivingSpace(locId ? locationMap?.[locId] : null)) {
+    if (isUnhousedSpaceForCharacter(locId ? locationMap?.[locId] : null, character?.id)) {
       if (imageMode) return `[LOCATION LOCKED: character is asleep at ${locName || 'their spot'} — an outdoor place they stay, NOT a bed or bedroom; depict them asleep on what is actually there]`;
       return `\n\nLOCATION TRUTH (SYSTEM-LOCKED at ${timeStr}): You are currently ASLEEP at ${locName || 'your spot'}. It is an outdoor place you stay, not a house or an apartment. Do NOT describe a bed, a bedroom, a kitchen or any indoor room.`;
     }

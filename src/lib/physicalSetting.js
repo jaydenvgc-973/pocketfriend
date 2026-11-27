@@ -10,7 +10,7 @@
  * then the location itself. An Unhoused Living Space is always outdoors.
  */
 
-import { isUnhousedLivingSpace } from "./unhousedLivingSpace.js";
+import { isUnhousedLivingSpace, hasHousedVenueType } from "./unhousedLivingSpace.js";
 
 const sameZone = (a, b) => String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
 
@@ -33,7 +33,10 @@ export function physicalSettingFor(location, zoneName) {
     if (unit?.living_space_kind === "unhoused_living_space") return "outdoor";
   }
 
-  if (isUnhousedLivingSpace(location)) return "outdoor";
+  // Only a place that is wholly an unhoused living space is outdoors by its own kind. A
+  // parent that also holds conventional residences keeps its own recorded setting: its
+  // apartments and houses are not outdoor spaces.
+  if (isUnhousedLivingSpace(location) && !hasHousedVenueType(location)) return "outdoor";
 
   return location.physical_setting || null;
 }

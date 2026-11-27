@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Building, ChevronDown } from "lucide-react";
 import { getUnitKind, getUnitLabel } from "@/lib/residentialUnits";
+import { getUnitGroups } from "@/lib/unhousedLivingSpace";
 
 /**
  * ApartmentSwitcher
@@ -98,6 +99,15 @@ export default function ApartmentSwitcher({
 
   const kind = getUnitKind(location);
   const noneText = noneLabel || kind.none;
+  // A Generic parent's spaces are listed by the kind of living arrangement each one is:
+  // apartments and houses under Apartments & Homes, tents and sleeping areas under Unhoused
+  // Living Spaces. Every other property keeps its single list and its own heading.
+  const unitGroups = units.length === 0
+    ? []
+    : location?.category === "generic"
+      ? getUnitGroups(location, units)
+      : [{ key: "all", label: kind.plural, units }];
+  const showGroupLabels = unitGroups.length > 1 || workspaces.length > 0;
   const activeWorkspace = workspaces.find((w) => w.unit_id === activeUnitId) || null;
   const active = units.find((u) => u.unit_id === activeUnitId) || null;
   // A workplace is shown by its own name, exactly as Places stores it.
@@ -150,20 +160,24 @@ export default function ApartmentSwitcher({
                 {!active && !activeWorkspace && <span className="w-1.5 h-1.5 rounded-full bg-primary flex-shrink-0" />}
               </button>
             )}
-            {workspaces.length > 0 && units.length > 0 && (
-              <p className="px-3 pt-1.5 pb-0.5 text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">
-                {kind.plural}
-              </p>
-            )}
-            {units.map((unit) => {
-              const isActive = unit.unit_id === activeUnitId;
-              return (
-                <button key={unit.unit_id} onClick={() => choose(unit.unit_id)} className={optionClass(isActive)}>
-                  <span className="flex-1 truncate">{getUnitLabel(unit.unit_name, location)}</span>
-                  {isActive && <span className="w-1.5 h-1.5 rounded-full bg-primary flex-shrink-0" />}
-                </button>
-              );
-            })}
+            {unitGroups.map((group) => (
+              <div key={group.key}>
+                {showGroupLabels && (
+                  <p className="px-3 pt-1.5 pb-0.5 text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">
+                    {group.label}
+                  </p>
+                )}
+                {group.units.map((unit) => {
+                  const isActive = unit.unit_id === activeUnitId;
+                  return (
+                    <button key={unit.unit_id} onClick={() => choose(unit.unit_id)} className={optionClass(isActive)}>
+                      <span className="flex-1 truncate">{getUnitLabel(unit.unit_name, location)}</span>
+                      {isActive && <span className="w-1.5 h-1.5 rounded-full bg-primary flex-shrink-0" />}
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
             {workspaces.length > 0 && (
               <>
                 <p className="px-3 pt-2 pb-0.5 text-[9px] font-semibold text-muted-foreground uppercase tracking-wider border-t border-border mt-1">

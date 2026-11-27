@@ -508,6 +508,49 @@
     "owner_role": {
       "type": "string"
     },
+    "leadership_assignments": {
+      "type": "array",
+      "default": [],
+      "description": "Additional leadership or management roles at this place, each with its own role label and its own person. A Generic parent offers the roles its Parent Location Type establishes (a city's Mayor, a country's President or Monarch, a building's Property Manager). Never created automatically and never shared with the ownership of any child place: the parent's mayor is not the landlord of the apartments inside it.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "assignment_id": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "description": "The role exactly as chosen for this place (e.g. Mayor, Deputy Mayor, Prime Minister, Property Manager)."
+          },
+          "character_id": {
+            "type": "string"
+          },
+          "character_name": {
+            "type": "string"
+          },
+          "is_npc": {
+            "type": "boolean",
+            "default": false
+          },
+          "npc_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "assignment_id",
+          "role"
+        ]
+      }
+    },
+    "images": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "owner_is_npc_name": {
+      "type": "string"
+    },
     "religion_denomination": {
       "type": "string"
     },
@@ -809,7 +852,7 @@
     },
     "parent_location_type": {
       "type": "string",
-      "description": "Generic parents only. What the parent itself is \u2014 city, town, village, neighborhood, district, slum, country, campus, building, property, complex, other. It describes the parent, never one of the child places inside it, and it supplies the parent's own whole-space label in Travel and Scenes. Empty on records saved before it existed, and never inferred as a building.",
+      "description": "Generic parents only. What the parent itself is \u2014 city, town, village, neighborhood, district, slum, state, country, campus, building, property, complex, other. It describes the parent, never one of the child places inside it, and it supplies the parent's own whole-space label in Travel and Scenes. Empty on records saved before it existed, and never inferred as a building.",
       "enum": [
         "city",
         "town",
@@ -817,6 +860,7 @@
         "neighborhood",
         "district",
         "slum",
+        "state",
         "country",
         "campus",
         "building",
@@ -911,7 +955,7 @@
           "zone_images": {
             "type": "array",
             "default": [],
-            "description": "Images generated for THIS business's own zones, each keeping the zone name it belongs to. The same image URLs are also part of the parent location's zone image_urls, so the existing Scenes reference usage is unchanged.",
+            "description": "Images generated for THIS business's own zones, each keeping the zone name it belongs to. The same image URLs are also part of the parent location's zone_image_urls, so the existing Scenes reference usage is unchanged.",
             "items": {
               "type": "object",
               "additionalProperties": false,

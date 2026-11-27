@@ -52,6 +52,8 @@ import { groupLocationReferences } from "@/lib/locationReferenceGroups";
 import { ZONE_PRESETS, ALLOWED_ASSIGNABLE_CHARACTER_TYPES, CATEGORIES, SUBTYPE_OPTIONS, SUBTYPE_LABELS, WORK_CATEGORIES, DAY_LABELS } from "@/lib/locationFormConfig";
 import { zoneOptionsForVenueTypes } from "@/lib/venueZoneOptions";
 import { isUnhousedLivingSpace, hasHousedVenueType, UNHOUSED_ZONE_PRESETS } from "@/lib/unhousedLivingSpace";
+import { getLeadershipConfig } from "@/lib/locationLeadership";
+import LocationLeadershipSection from "@/components/location/LocationLeadershipSection";
 import { renameZoneInForm, moveZoneInForm } from "@/lib/zoneOrder";
 import PhysicalSettingToggle from "@/components/location/PhysicalSettingToggle";
 
@@ -560,6 +562,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     owner_is_npc: editingLocation?.owner_is_npc || false,
     owner_npc_name: editingLocation?.owner_npc_name || "",
     owner_role: editingLocation?.owner_role || "owner",
+    leadership_assignments: editingLocation?.leadership_assignments || [],
     is_default_generic: editingLocation?.is_default_generic || false,
     religion_denomination: editingLocation?.religion_denomination || "",
     rent_or_housing_cost: editingLocation?.rent_or_housing_cost || 1200,
@@ -650,6 +653,10 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
 
   // An established place to stay that is not housing. Always outdoors, and never a home.
   const isUnhoused = isUnhousedLivingSpace(form);
+
+  // What kind of leadership this place has follows what the place IS. A city's roles are
+  // municipal; a country's are national; an ordinary property keeps its owner/manager roles.
+  const leadershipConfig = getLeadershipConfig(form);
 
   // A Generic property may carry several venue types, so every selected venue type adds the
   // zone options of the space it describes. These stay options only: a zone exists once the
@@ -1592,56 +1599,21 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         </div>
       )}
 
-      {/* ── OWNER ── */}
-      <div className="space-y-3">
-        <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">Owner / Landlord (optional)</label>
-        <div className="grid grid-cols-2 gap-2">
-          <button onClick={() => update("owner_is_npc", false)} className={`py-2 px-3 rounded-xl text-sm border transition-colors ${!form.owner_is_npc ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-foreground hover:border-primary/40"}`}>👤 Active Character</button>
-          <button onClick={() => update("owner_is_npc", true)} className={`py-2 px-3 rounded-xl text-sm border transition-colors ${form.owner_is_npc ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-foreground hover:border-primary/40"}`}>🧑‍🤝‍🧑 NPC</button>
-        </div>
-        {!form.owner_is_npc ? (
-           <div className="space-y-2 max-h-44 overflow-y-auto">
-             <button onClick={() => update("owner_character_id", "")} className={`w-full flex items-center gap-2 p-2 rounded-xl border text-sm transition-colors ${!form.owner_character_id ? "bg-primary/10 border-primary/40 text-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}>
-               <span className="w-6 h-6 rounded-full bg-secondary flex items-center justify-center text-xs">—</span>
-               No owner assigned
-             </button>
-             {currentUser?.id && (
-               <button onClick={() => update("owner_character_id", currentUser.id)} className={`w-full flex items-center gap-3 p-2 rounded-xl border transition-colors ${form.owner_character_id === currentUser.id ? "bg-primary/10 border-primary/40" : "bg-card border-border hover:border-primary/40"}`}>
-                 {userAvatarUrl ? <img src={userAvatarUrl} alt={worldName} className="w-7 h-7 rounded-full object-cover flex-shrink-0" /> : (
-                   <div className="w-7 h-7 rounded-full bg-primary/20 border-2 border-primary flex items-center justify-center flex-shrink-0">
-                     <span className="text-xs font-bold text-primary">{worldName[0]?.toUpperCase()}</span>
-                   </div>
-                 )}
-                 <span className="text-sm text-foreground">{worldName}</span>
-                 <span className="text-xs text-primary/60 ml-auto">Player</span>
-               </button>
-             )}
-             {activeChars.map(c => (
-               <button key={c.id} onClick={() => update("owner_character_id", c.id)} className={`w-full flex items-center gap-3 p-2 rounded-xl border transition-colors ${form.owner_character_id === c.id ? "bg-primary/10 border-primary/40" : "bg-card border-border hover:border-primary/40"}`}>
-                 <CharacterAvatar character={c} size="sm" />
-                 <span className="text-sm text-foreground">{c.name}</span>
-               </button>
-             ))}
-             {assignableNpcs.filter(c => c.character_type === 'npc_fictitious').length > 0 && <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">NPC Fictitious</p>}
-             {assignableNpcs.filter(c => c.character_type === 'npc_fictitious').map(npc => (
-               <button key={npc.id} onClick={() => update("owner_character_id", npc.id)} className={`w-full flex items-center gap-3 p-2 rounded-xl border transition-colors ${form.owner_character_id === npc.id ? "bg-primary/10 border-primary/40" : "bg-card border-border hover:border-primary/40"}`}>
-                 <CharacterAvatar character={npc} size="sm" />
-                 <span className="text-sm text-foreground">{npc.name}</span>
-               </button>
-             ))}
-
-           </div>
-         ) : (
-          <Input value={form.owner_npc_name} onChange={e => update("owner_npc_name", e.target.value)} placeholder="NPC name (e.g. Mr. Hassan, The Landlord)" className="h-10 rounded-xl text-sm" />
-        )}
-        {(form.owner_character_id || (form.owner_is_npc && form.owner_npc_name.trim())) && (
-          <div className="flex flex-wrap gap-2">
-            {["owner", "landlord", "manager", "operator"].map(role => (
-              <button key={role} onClick={() => update("owner_role", role)} className={`px-3 py-1.5 rounded-full text-xs border transition-colors capitalize ${form.owner_role === role ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}>{role}</button>
-            ))}
-          </div>
-        )}
-      </div>
+      {/* ── OWNER / LEADERSHIP ──
+          An ordinary place keeps its existing owner and manager roles unchanged. A Generic
+          parent offers the roles its Parent Location Type establishes — a city's mayor, a
+          country's president or monarch, a building's property manager — and may hold more
+          than one. Nothing is assigned automatically. */}
+      <LocationLeadershipSection
+        form={form}
+        update={update}
+        currentUser={currentUser}
+        worldName={worldName}
+        userAvatarUrl={userAvatarUrl}
+        activeChars={activeChars}
+        assignableNpcs={assignableNpcs}
+        leadership={leadershipConfig}
+      />
 
       <div className="space-y-2">
         <div className="flex items-center justify-between">

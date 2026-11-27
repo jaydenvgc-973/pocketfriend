@@ -19,6 +19,7 @@ export const PARENT_LOCATION_TYPES = [
   { value: 'neighborhood', label: 'Neighborhood', whole: 'Whole neighborhood' },
   { value: 'district', label: 'District', whole: 'Whole district' },
   { value: 'slum', label: 'Slum', whole: 'Whole slum' },
+  { value: 'state', label: 'State / Province', whole: 'Whole state' },
   { value: 'country', label: 'Country', whole: 'Whole country' },
   { value: 'campus', label: 'Campus', whole: 'Whole campus' },
   { value: 'building', label: 'Building', whole: 'Whole building' },

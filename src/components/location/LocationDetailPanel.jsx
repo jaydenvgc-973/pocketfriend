@@ -7,7 +7,8 @@ import { hydrateCharacterReference } from "@/lib/characterEditableListResolver";
 import WorkerEmploymentControls from "./WorkerEmploymentControls";
 import FacilityUnitsSection from "./FacilityUnitsSection";
 import { sortUnits } from "@/lib/residentialUnits";
-import { isUnhousedLivingSpace } from "@/lib/unhousedLivingSpace";
+import { getUnitGroups } from "@/lib/unhousedLivingSpace";
+import { getLeadershipConfig } from "@/lib/locationLeadership";
 const Church = Heart;
 
 function DetailRow({ label, value, highlight }) {
@@ -113,6 +114,10 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
   const workerIdsMerged = Array.from(new Set([...workerIdsFromArray, ...workerIdsFromTitles, ...workerIdsFromShifts]));
   const workerIds = workerIdsMerged;
 
+  // A Generic parent's authority roles follow what the parent is: a city has a mayor, a
+  // building has an owner or property manager. Every other place is unchanged.
+  const leadership = getLeadershipConfig(location);
+
   // Dynamic owner section label based on owner_role field
   const ownerSectionLabel = (() => {
     const role = (location.owner_role || '').toLowerCase();
@@ -159,13 +164,20 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
           <DetailRow label="Total Housing Cost" value={totalHousingCost > 0 ? `$${totalHousingCost}/mo` : null} highlight />
           {rentSplit && <DetailRow label="Per-Resident Rent" value={`$${rentSplit}/mo`} />}
 
-          {(location.owner_character_name || location.owner_npc_name) && (
+          {(location.owner_character_name || location.owner_npc_name || (location.leadership_assignments || []).length > 0) && (
             <>
-              <SectionHeader icon={User} label="Owner / Landlord" />
-              <DetailRow
-                label={location.owner_role || 'owner'}
-                value={location.owner_is_npc ? location.owner_npc_name : location.owner_character_name}
-              />
+              <SectionHeader icon={User} label={leadership ? leadership.heading : "Owner / Landlord"} />
+              {(location.owner_character_name || location.owner_npc_name) && (
+                <DetailRow
+                  label={location.owner_role || 'owner'}
+                  value={location.owner_is_npc ? location.owner_npc_name : location.owner_character_name}
+                />
+              )}
+              {/* Every leadership role keeps its own label — a mayor is never shown as the
+                  landlord of the places inside the city. */}
+              {(location.leadership_assignments || []).map(a => (
+                <DetailRow key={a.assignment_id} label={a.role} value={a.is_npc ? a.npc_name : a.character_name} />
+              ))}
             </>
           )}
 
@@ -223,10 +235,16 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
           {/* Read-only Apartments display (Building venue type) */}
           {(location.residential_units || []).length > 0 && (
             <>
-              {/* An encampment's living spaces are never presented as apartments. */}
-              <SectionHeader icon={Building} label={isUnhousedLivingSpace(location) ? 'Unhoused Living Spaces' : location.category === 'hotel' ? 'Rooms / Units' : 'Apartments'} />
+              {/* Every space is listed under the kind of living arrangement it actually is.
+                  One city can hold apartments, houses and unhoused living spaces at once, and
+                  none of them is ever presented as another kind. */}
+              {getUnitGroups(location, location.residential_units || []).map(group => {
+                const unhousedGroup = group.key === 'unhoused_living_space';
+                return (
+                <div key={group.key}>
+                <SectionHeader icon={Building} label={unhousedGroup ? 'Unhoused Living Spaces' : location.category === 'hotel' ? 'Rooms / Units' : 'Apartments'} />
               <div className="space-y-1.5">
-                {sortUnits(location.residential_units || []).map(unit => {
+                {sortUnits(group.units).map(unit => {
                   const occupants = (unit.occupant_character_ids || []).map(id => {
                     // Residents on another account resolve from the shared projection.
                     const shared = sharedResidentById.get(id);
@@ -251,7 +269,7 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
                           </button>
                         )}
                       </div>
-                      {aptRentAmount > 0 && (
+                      {!unhousedGroup && aptRentAmount > 0 && (
                         <div className="text-[10px] text-muted-foreground mb-1">
                           Rent: ${aptRentAmount}/mo{occupantCount > 1 ? ` · ${aptCostSplitMethod} split` : ''}
                         </div>
@@ -270,7 +288,7 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
                                   ? <img src={o.avatar_url} alt={o.name} className="w-4 h-4 rounded-full object-cover flex-shrink-0" />
                                   : <div className="w-4 h-4 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0 text-[8px] font-bold text-primary">{o.name?.[0]?.toUpperCase()}</div>}
                                 <span className="text-xs text-foreground flex-1 truncate">{o.name}</span>
-                                {aptRentAmount > 0 && <span className="text-[10px] text-green-400 font-medium flex-shrink-0">${share}/mo</span>}
+                                {!unhousedGroup && aptRentAmount > 0 && <span className="text-[10px] text-green-400 font-medium flex-shrink-0">${share}/mo</span>}
                               </div>
                             );
                           })}
@@ -282,6 +300,9 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
                   );
                 })}
               </div>
+                </div>
+                );
+              })}
               {/* Show unassigned residents if any */}
               {(() => {
                 const assignedIds = new Set();

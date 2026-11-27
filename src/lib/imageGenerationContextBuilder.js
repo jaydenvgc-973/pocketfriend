@@ -3,7 +3,7 @@ import { resolveCurrentOutfit, buildOutfitPromptText } from './outfitRotationEng
 import { resolveUserParticipantInPrompt } from './chatImageSubjectResolver.js';
 import { adaptOutfitForWeather } from './weatherOutfitAdapter.js';
 import { resolveUniform, buildUniformOutfitContext } from './uniformResolver.js';
-import { isUnhousedLivingSpace } from './unhousedLivingSpace.js';
+import { isUnhousedSpaceAt } from './unhousedLivingSpace.js';
 
 /**
  * Unified Image Generation Context Builder
@@ -302,7 +302,7 @@ export async function buildImageGenerationContext({
 
   // A place someone stays without housing is not a bedroom. They sleep in the layers they
   // already have — a pajama set is never invented for them.
-  if (isSleepContext && isUnhousedLivingSpace(locationRecord) && effectiveCharacterRecord) {
+  if (isSleepContext && isUnhousedSpaceAt(locationRecord, effectiveZoneName) && effectiveCharacterRecord) {
     outfitText = 'the layered clothing they are already wearing, unchanged for sleep';
     outfitSource = 'unhoused_sleep_layers';
     outfitPrecedenceReason = 'sleep_context_place_without_housing';
