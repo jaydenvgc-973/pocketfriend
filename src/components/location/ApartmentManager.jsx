@@ -1,8 +1,10 @@
 import { useState } from "react";
-import { Plus, X, Pencil, Trash2, UserPlus, ArrowRight } from "lucide-react";
+import { Plus, X, Pencil, Trash2, UserPlus, ArrowRight, ChevronDown, ChevronRight } from "lucide-react";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import PhysicalSettingToggle from "@/components/location/PhysicalSettingToggle";
 import ResidenceSpacesEditor from "@/components/location/ResidenceSpacesEditor";
+import SpaceDescriptionField from "@/components/location/SpaceDescriptionField";
+import { roomDescription, spaceImageUrls, spaceZoneImageUrls, withRoomDescription } from "@/lib/spaceDescription";
 
 const UNKNOWN_NAME = "Unknown resident";
 
@@ -60,6 +62,8 @@ export default function ApartmentManager({
   const [editingUnitId, setEditingUnitId] = useState(null);
   const [editNameValue, setEditNameValue] = useState("");
   const [assignMenuUnitId, setAssignMenuUnitId] = useState(null);
+  // Which residence's optional room descriptions are open. Purely a display choice.
+  const [roomsOpenUnitId, setRoomsOpenUnitId] = useState(null);
 
   const units = residentialUnits || [];
 
@@ -132,6 +136,18 @@ export default function ApartmentManager({
 
   const handleSetUnitType = (unitId, value) => {
     onChange(units.map(u => u.unit_id === unitId ? { ...u, residence_type: value } : u));
+  };
+
+  // This residence's own optional description, and each of its rooms' own. Both stay on
+  // this exact unit: nothing here writes to another residence or to the property.
+  const handleSetUnitDescription = (unitId, value) => {
+    onChange(units.map(u => u.unit_id === unitId ? { ...u, description: value } : u));
+  };
+
+  const handleSetUnitRoomDescription = (unitId, zoneName, value) => {
+    onChange(units.map(u => u.unit_id === unitId
+      ? { ...u, zone_descriptions: withRoomDescription(u, zoneName, value) }
+      : u));
   };
 
   // Where this residence physically is — independent of the property it belongs to.
@@ -264,6 +280,20 @@ export default function ApartmentManager({
                   </select>
                 </div>
 
+                {/* What THIS residence actually looks like. Optional: blank is normal, and
+                    the property's own description then applies to it. */}
+                <SpaceDescriptionField
+                  label="Description (optional)"
+                  hint={`What ${unit.unit_name || `this ${unitSingular}`} actually looks like — furnishings, condition, atmosphere`}
+                  value={unit.description || ""}
+                  onChange={(value) => handleSetUnitDescription(unit.unit_id, value)}
+                  locationName={locationName ? `${unit.unit_name || unitSingular} — inside ${locationName}` : (unit.unit_name || locationName)}
+                  spaceLabel={unit.unit_name || unitSingular}
+                  category={category}
+                  subtype={subtype}
+                  imageUrls={spaceImageUrls({ space: unit, zones })}
+                />
+
                 {/* Every space of THIS residence, with its own pictures. A residence is
                     never limited to a single zone, and two residences that both have a
                     Living Room keep their own. */}
@@ -284,7 +314,42 @@ export default function ApartmentManager({
                   onAddPropertyZone={onAddZone}
                   onAddPropertyZoneImage={onAddPropertyZoneImage}
                   onRemovePropertyZoneImage={onRemovePropertyZoneImage}
+                  unit={unit}
                 />
+
+                {/* Each room of this residence may describe itself. A room left blank keeps
+                    using the residence's description. */}
+                {(() => {
+                  const roomNames = unit.zone_names || (unit.zone_name ? [unit.zone_name] : []);
+                  if (roomNames.length === 0) return null;
+                  const open = roomsOpenUnitId === unit.unit_id;
+                  return (
+                    <div className="space-y-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setRoomsOpenUnitId(open ? null : unit.unit_id)}
+                        className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-primary transition-colors"
+                      >
+                        {open ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                        Room descriptions (optional)
+                      </button>
+                      {open && roomNames.map(zoneName => (
+                        <SpaceDescriptionField
+                          key={zoneName}
+                          label={zoneName}
+                          hint="Optional — leave blank to use this residence's description"
+                          value={roomDescription(unit, zoneName)}
+                          onChange={(value) => handleSetUnitRoomDescription(unit.unit_id, zoneName, value)}
+                          locationName={`${zoneName} — ${unit.unit_name || unitSingular}`}
+                          spaceLabel={`${zoneName} in ${unit.unit_name || unitSingular}`}
+                          category={category}
+                          subtype={subtype}
+                          imageUrls={spaceZoneImageUrls({ space: unit, zoneName, zones })}
+                        />
+                      ))}
+                    </div>
+                  );
+                })()}
 
                 {forcePhysicalSetting ? (
                   <p className="text-[10px] text-muted-foreground">

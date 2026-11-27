@@ -834,6 +834,32 @@
               "unhoused_living_space"
             ],
             "description": "Which kind of living arrangement this space is. residence = a conventional home (apartment, house, dorm room). unhoused_living_space = an independently configured outdoor living space such as an encampment or underpass, whose occupants remain unhoused. Units saved before this field existed are conventional residences unless the location itself is an Unhoused Living Space."
+          },
+          "description": {
+            "type": "string",
+            "description": "This residence's own optional description \u2014 its furnishings, condition, light and atmosphere. Optional: never required to save, and never required to generate an image. It describes only THIS residence and is never applied to another unit of the same property. A room inside it may carry its own description in zone_descriptions, which is more specific and takes precedence."
+          },
+          "zone_descriptions": {
+            "type": "array",
+            "default": [],
+            "description": "Optional descriptions for the individual rooms of THIS residence, each keeping the room name it belongs to (e.g. Bedroom 1, Basement). A room without an entry keeps using the residence's own description. Never copied to another room or another residence, and never a second image collection: the room's reference images stay where they already are.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "zone_name": {
+                  "type": "string",
+                  "description": "The room this description belongs to \u2014 one of this residence's zone_names"
+                },
+                "description": {
+                  "type": "string",
+                  "description": "This exact room's own description. Empty means this room has none of its own."
+                }
+              },
+              "required": [
+                "zone_name"
+              ]
+            }
           }
         },
         "required": [
@@ -927,6 +953,28 @@
           "description": {
             "type": "string",
             "description": "This business's own description, separate from the parent property's description (e.g. what Agency (NJ) is and does, distinct from Gateway House)."
+          },
+          "zone_descriptions": {
+            "type": "array",
+            "default": [],
+            "description": "Optional descriptions for the individual rooms of THIS business, each keeping the room name it belongs to (reception, exam room, stockroom). A room without an entry keeps using the business's own description. Never copied to another room or another business, and never a second image collection.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "zone_name": {
+                  "type": "string",
+                  "description": "The room this description belongs to \u2014 one of this business's zone_names"
+                },
+                "description": {
+                  "type": "string",
+                  "description": "This exact room's own description. Empty means this room has none of its own."
+                }
+              },
+              "required": [
+                "zone_name"
+              ]
+            }
           },
           "business_category": {
             "type": "string",

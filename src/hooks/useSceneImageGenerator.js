@@ -14,6 +14,10 @@ import { buildAppearanceLockBlock } from "@/lib/appearanceLockValidator";
 import { getBackgroundPopulationDiversityDirective } from "@/lib/imageDiversityConstraints";
 import { getEasternLightingDescriptor, buildZoneLockEnvNote, buildActionEnvNote, buildFacilityEnvNote, buildTimeOfDayLock, resolveExistingObjectCueForZone, buildPhysicalSettingNote } from "@/lib/sceneImagePromptBuilder";
 import { physicalSettingFor } from "@/lib/physicalSetting";
+import { resolveSpaceDescription, buildSpaceDescriptionNote } from "@/lib/spaceDescription";
+import { getActiveSceneSpaceId } from "@/lib/activeSceneSpace";
+import { getUnitById } from "@/lib/residentialUnits";
+import { getWorkplaceById } from "@/lib/locationWorkspaces";
 import { isUnhousedSpaceAt, buildUnhousedSpaceRule } from "@/lib/unhousedLivingSpace";
 import { resolveEstablishedAccommodations, buildSleepAccommodationRule } from "@/lib/sceneAccommodations";
 import { isCharacterAsleep } from "@/lib/sleepUtils";
@@ -50,7 +54,7 @@ import { resolveSceneZone } from "@/lib/sceneSpaceZone";
  * Initial generation, Refresh, and action-triggered generation all use this same
  * function — they all derive their cast from the exact Scene participant IDs.
  */
-export function useSceneImageGenerator({ transcript = [] } = {}) {
+export function useSceneImageGenerator({ transcript = [], getActiveSpace = null } = {}) {
   const [sceneImage, setSceneImage] = useState(null);
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   // The scene's transcript exactly as it stands now. Read when a picture is generated, so
@@ -125,6 +129,31 @@ export function useSceneImageGenerator({ transcript = [] } = {}) {
     const lightingDesc = getEasternLightingDescriptor();
     // The hour is stated on every path, and it is fixed for the whole continuous scene.
     const timeLock = buildTimeOfDayLock(lightingDesc);
+
+    // ── SPACE DESCRIPTION — THE MOST SPECIFIC ONE THAT EXISTS ──
+    // The exact room if it has its own description, then the residence or workspace it is
+    // in, then the shared zone, then the property. It adds appearance, condition and
+    // atmosphere only: it never moves the picture into another room, never overrides the
+    // reference images' layout, and never changes what kind of place this is.
+    // The configured space the picture is of: the residence or workplace the Scenes page
+    // published, resolved from the live location so an edited description is used at once.
+    const activeSpace = (() => {
+      const supplied = getActiveSpace?.() || null;
+      if (supplied) return supplied;
+      const spaceId = getActiveSceneSpaceId();
+      if (!spaceId || !location) return null;
+      return getUnitById(location, spaceId) || getWorkplaceById(location, spaceId) || null;
+    })();
+    const spaceDescriptionNote = buildSpaceDescriptionNote({
+      description: resolveSpaceDescription({
+        space: activeSpace,
+        zoneName: activeZone,
+        zones: locationZones,
+        locationDescription: location?.description || "",
+      }).text,
+      label: activeSpace?.unit_name || activeSpace?.name || location?.name || "this place",
+      kind: activeSpace?.workplace_id ? "workspace" : activeSpace?.unit_id ? "residence" : "place",
+    });
 
     // ── FINAL PARTICIPANTS — selected by ID from the completed collection ──
     // Exactly one subject per person: the same individual reaching the cast twice (their own
@@ -302,7 +331,7 @@ export function useSceneImageGenerator({ transcript = [] } = {}) {
         // The selected zone is stated on EVERY activity picture, with or without its own
         // reference images — an activity never moves anyone indoors, and a zone that has
         // no images yet is still the place this moment happens in.
-        finalPrompt += ` ` + buildPhysicalSettingNote(physicalSettingFor(location, currentZoneForAction?.zone_name)) + (currentZoneForAction
+        finalPrompt += spaceDescriptionNote + ` ` + buildPhysicalSettingNote(physicalSettingFor(location, currentZoneForAction?.zone_name)) + (currentZoneForAction
           ? buildActionEnvNote(currentZoneForAction.zone_name, envRefs.length > 0, lightingDesc)
           : buildFacilityEnvNote(location.name, envRefs.length > 0, lightingDesc));
       }
@@ -335,7 +364,7 @@ export function useSceneImageGenerator({ transcript = [] } = {}) {
     // No single room is the scene (the property as a whole): the note describes the
     // property itself instead of asserting a room nobody selected.
     // The designated setting outranks assumptions about the parent property.
-    const envNote = buildPhysicalSettingNote(physicalSettingFor(location, activeZoneName)) + (currentZoneForAction
+    const envNote = spaceDescriptionNote + buildPhysicalSettingNote(physicalSettingFor(location, activeZoneName)) + (currentZoneForAction
       ? buildZoneLockEnvNote(activeZoneName, authoratativeEnvRefs.length > 0, lightingDesc, existingObjectCue)
       : buildFacilityEnvNote(location.name, authoratativeEnvRefs.length > 0, lightingDesc));
 

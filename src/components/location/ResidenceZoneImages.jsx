@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { X, Upload } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import ZoneImageGenerator from "@/components/location/ZoneImageGenerator";
+import { resolveSpaceDescription } from "@/lib/spaceDescription";
 
 /**
  * ResidenceZoneImages — the reference images of ONE residence's own spaces.
@@ -26,6 +27,10 @@ export default function ResidenceZoneImages({
   category = "",
   subtype = [],
   locationDescription = "",
+  // The residence this room belongs to. Its own description (or this room's) is what the
+  // picture is composed from — never another residence's and never the whole property's
+  // when this space has something more specific to say.
+  unit = null,
   maxImages = 5,
   onAddImage,
   onRemoveImage,
@@ -130,7 +135,7 @@ export default function ResidenceZoneImages({
                     locationName={locationName ? `${residenceLabel} — inside ${locationName}` : residenceLabel}
                     category={category}
                     subtype={subtype}
-                    locationDescription={locationDescription}
+                    locationDescription={resolveSpaceDescription({ space: unit, zoneName, zones: propertyZones, locationDescription }).text}
                     hasExistingImage={images.length > 0}
                     existingZoneImageUrls={parentZone?.image_urls || []}
                     onGenerate={(url) => onAddImage?.(zoneName, url)}

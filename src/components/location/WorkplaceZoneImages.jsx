@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { X, Upload } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import ZoneImageGenerator from "@/components/location/ZoneImageGenerator";
+import { resolveSpaceDescription } from "@/lib/spaceDescription";
 
 /**
  * WorkplaceZoneImages — the zone images of ONE business inside a property.
@@ -130,7 +131,7 @@ export default function WorkplaceZoneImages({
                       locationName={locationName ? `${businessName} — inside ${locationName}` : businessName}
                       category={workplace?.business_category || category}
                       subtype={businessSubtypes}
-                      locationDescription={workplace?.description?.trim() || locationDescription}
+                      locationDescription={resolveSpaceDescription({ space: workplace, zoneName, zones: locationZones, locationDescription }).text}
                       hasExistingImage={images.length > 0}
                       existingZoneImageUrls={parentZone?.image_urls || []}
                       onGenerate={(url) => onAddImage?.(zoneName, url)}

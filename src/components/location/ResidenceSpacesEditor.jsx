@@ -29,6 +29,9 @@ export default function ResidenceSpacesEditor({
   category = "",
   subtype = [],
   locationDescription = "",
+  // The residence itself, so its own description and its rooms' descriptions reach the
+  // picture generated for each space.
+  unit = null,
   onAddPropertyZone,
   onAddPropertyZoneImage,
   onRemovePropertyZoneImage,
@@ -173,6 +176,7 @@ export default function ResidenceSpacesEditor({
         category={category}
         subtype={subtype}
         locationDescription={locationDescription}
+        unit={unit}
         onAddImage={handleAddImage}
         onRemoveImage={handleRemoveImage}
       />

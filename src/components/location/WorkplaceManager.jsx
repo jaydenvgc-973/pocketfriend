@@ -4,6 +4,8 @@ import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import GroupedCharacterSelector from "@/components/location/GroupedCharacterSelector";
 import PositionInput from "@/components/location/PositionInput";
 import WorkplaceZoneImages from "@/components/location/WorkplaceZoneImages";
+import SpaceDescriptionField from "@/components/location/SpaceDescriptionField";
+import { roomDescription, spaceZoneImageUrls, withRoomDescription } from "@/lib/spaceDescription";
 import LocationHoursEditor from "@/components/location/LocationHoursEditor";
 import { Input } from "@/components/ui/input";
 import { ZONE_PRESETS } from "@/lib/locationFormConfig";
@@ -86,6 +88,8 @@ export default function WorkplaceManager({
   const [expandedId, setExpandedId] = useState(null);
   const [pickingFor, setPickingFor] = useState(null);
   const [zoneDraft, setZoneDraft] = useState("");
+  // Which business's optional room descriptions are open. A display choice only.
+  const [roomsOpenId, setRoomsOpenId] = useState(null);
   // Which employee's own employment controls are open. One at a time keeps the
   // section compact; it never changes what is saved.
   const [editingKey, setEditingKey] = useState(null);
@@ -257,16 +261,19 @@ export default function WorkplaceManager({
                     />
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Description</label>
-                    <textarea
-                      value={workplace.description || ""}
-                      onChange={e => updateWorkplace(workplace.workplace_id, { description: e.target.value })}
-                      placeholder={`What is ${workplace.name?.trim() || "this business"} — separate from the property itself`}
-                      rows={2}
-                      className="w-full px-2.5 py-1.5 rounded-lg bg-secondary border border-border text-xs text-foreground placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/50 resize-y"
-                    />
-                  </div>
+                  {/* This business's own description — already its own field, now also
+                      generated from its own reference images. Separate from the property. */}
+                  <SpaceDescriptionField
+                    label="Description"
+                    hint={`What is ${workplace.name?.trim() || "this business"} — separate from the property itself`}
+                    value={workplace.description || ""}
+                    onChange={(value) => updateWorkplace(workplace.workplace_id, { description: value })}
+                    locationName={locationName ? `${workplace.name?.trim() || "This business"} — inside ${locationName}` : (workplace.name?.trim() || locationName)}
+                    spaceLabel={workplace.name?.trim() || "this business"}
+                    category={workplace.business_category || category}
+                    subtype={workplace.business_type ? [workplace.business_type] : subtype}
+                    imageUrls={(workplace.zone_images || []).map(i => i?.url).filter(Boolean)}
+                  />
 
                   {/* Where this business physically is — independent of the property it
                       belongs to. An outdoor patio or yard stays connected to its property
@@ -440,6 +447,40 @@ export default function WorkplaceManager({
                     onAddImage={(zoneName, url) => onAddZoneImage?.(workplace.workplace_id, zoneName, url)}
                     onRemoveImage={(zoneName, url) => onRemoveZoneImage?.(workplace.workplace_id, zoneName, url)}
                   />
+
+                  {/* Each room of this business may describe itself. A room left blank keeps
+                      using the business's own description. */}
+                  {(workplace.zone_names || []).length > 0 && (() => {
+                    const open = roomsOpenId === workplace.workplace_id;
+                    return (
+                      <div className="space-y-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setRoomsOpenId(open ? null : workplace.workplace_id)}
+                          className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-primary transition-colors"
+                        >
+                          {open ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                          Room descriptions (optional)
+                        </button>
+                        {open && (workplace.zone_names || []).map(zoneName => (
+                          <SpaceDescriptionField
+                            key={zoneName}
+                            label={zoneName}
+                            hint="Optional — leave blank to use this business's description"
+                            value={roomDescription(workplace, zoneName)}
+                            onChange={(value) => updateWorkplace(workplace.workplace_id, {
+                              zone_descriptions: withRoomDescription(workplace, zoneName, value),
+                            })}
+                            locationName={`${zoneName} — ${workplace.name?.trim() || "this business"}`}
+                            spaceLabel={`${zoneName} in ${workplace.name?.trim() || "this business"}`}
+                            category={workplace.business_category || category}
+                            subtype={workplace.business_type ? [workplace.business_type] : subtype}
+                            imageUrls={spaceZoneImageUrls({ space: workplace, zoneName, zones })}
+                          />
+                        ))}
+                      </div>
+                    );
+                  })()}
 
                   <div className="space-y-1">
                     <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Employees</label>
