@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { base44 } from "@/api/base44Client";
 import { useNavigate, Link } from "react-router-dom";
 import { runAsForegroundTask, registerForegroundTask, FOREGROUND_TASKS } from "@/lib/foregroundPriority";
@@ -23,7 +23,11 @@ import { CHARACTER_TRAITS } from "@/components/character/CharacterTraitsStep";
 const ETHNICITIES = ["Black / African American", "Latino / Hispanic", "White / Caucasian", "Asian", "Middle Eastern", "Mixed / Multiracial", "Other"];
 const GENDERS = ["Male", "Female", "Non-binary"];
 const AGES = ["Early 20s", "Mid 20s", "Late 20s", "Early 30s", "Mid 30s", "Late 30s", "40s+"];
-const LIVING = ["Lives alone", "Lives with roommates", "Lives with partner", "Lives with family", "Between places"];
+// "Choose Later" is an explicit deferral: no home location is established and the
+// character is never treated as homeless because of it.
+const LIVING = ["Choose Later", "Lives alone", "Lives with roommates", "Lives with partner", "Lives with family", "Between places"];
+// Random creation starts someone from scratch, so it only picks a real living situation.
+const RANDOM_LIVING = LIVING.filter(l => l !== "Choose Later");
 const VIBES = ["Laid back", "Intense", "Sarcastic", "Warm", "Blunt", "Mysterious", "Chaotic", "Grounded"];
 
 const ARCHETYPES = [
@@ -280,7 +284,7 @@ export default function CreateCharacter() {
   const generateBackstory = async () => {
     setIsGeneratingBackstory(true);
     const result = await base44.integrations.Core.InvokeLLM({
-      prompt: `Write a short, raw backstory (2-3 sentences) for a ${data.age_range || "adult"} ${data.gender || "person"} who is ${data.ethnicities.join(" / ") || "from a mixed background"}, ${data.living_situation || "living on their own"}, working in ${data.workplace_type || "some field"}. Archetype: ${data.archetype || "unknown"}. Write in third person, informal, grounded. No flowery language. Focus on upbringing, family, or a defining past experience. IMPORTANT: Do NOT use any specific names for family members or people — use generic terms only (e.g. "their mother", "an older sibling", "a childhood friend"). Do NOT reference any names from other characters or external sources.`
+      prompt: `Write a short, raw backstory (2-3 sentences) for a ${data.age_range || "adult"} ${data.gender || "person"} who is ${data.ethnicities.join(" / ") || "from a mixed background"}, ${data.living_situation === "Choose Later" ? "whose home is not established yet" : (data.living_situation || "living on their own")}, working in ${data.workplace_type || "some field"}. Archetype: ${data.archetype || "unknown"}. Write in third person, informal, grounded. No flowery language. Focus on upbringing, family, or a defining past experience. IMPORTANT: Do NOT use any specific names for family members or people — use generic terms only (e.g. "their mother", "an older sibling", "a childhood friend"). Do NOT reference any names from other characters or external sources.`
     });
     update("background", result);
     setIsGeneratingBackstory(false);
@@ -317,7 +321,7 @@ export default function CreateCharacter() {
   const generateSituation = async () => {
     setIsGeneratingSituation(true);
     const result = await base44.integrations.Core.InvokeLLM({
-      prompt: `Describe in 2-3 sentences what's currently going on in the life of a ${data.age_range || "adult"} ${data.gender || "person"} who works in ${data.workplace_type || "some field"} as a ${data.job_title || "worker"} and ${data.living_situation || "lives somewhere"}. Make it feel like a real slice of life — something they're dealing with, adjusting to, or navigating right now. Casual tone, third person, no drama clichés. IMPORTANT: Do NOT use any specific names — use generic terms only (e.g. "their roommate", "a coworker", "their landlord").`
+      prompt: `Describe in 2-3 sentences what's currently going on in the life of a ${data.age_range || "adult"} ${data.gender || "person"} who works in ${data.workplace_type || "some field"} as a ${data.job_title || "worker"} and ${data.living_situation === "Choose Later" ? "whose home is not established yet" : (data.living_situation || "lives somewhere")}. Make it feel like a real slice of life — something they're dealing with, adjusting to, or navigating right now. Casual tone, third person, no drama clichés. IMPORTANT: Do NOT use any specific names — use generic terms only (e.g. "their roommate", "a coworker", "their landlord").`
     });
     update("situation_override", result);
     setIsGeneratingSituation(false);
@@ -416,7 +420,7 @@ Return ONLY a JSON object with a "members" array. Each item: { name: string, rel
       const randomGender = GENDERS[Math.floor(Math.random() * GENDERS.length)];
       const randomAge = AGES[Math.floor(Math.random() * AGES.length)];
       const randomEthnicity = ETHNICITIES[Math.floor(Math.random() * ETHNICITIES.length)];
-      const randomLiving = LIVING[Math.floor(Math.random() * LIVING.length)];
+      const randomLiving = RANDOM_LIVING[Math.floor(Math.random() * RANDOM_LIVING.length)];
       const randomArchetype = ARCHETYPES[Math.floor(Math.random() * ARCHETYPES.length)];
       const randomEnergy = ENERGY_SCALE[Math.floor(Math.random() * ENERGY_SCALE.length)];
       const randomJob = JOB_TYPES[Math.floor(Math.random() * JOB_TYPES.length)];
@@ -625,6 +629,11 @@ Return ONLY a JSON object with a "memories" array. Each memory: { title, descrip
       const fullName = [data.first_name, data.middle_name, data.last_name].filter(Boolean).join(" ");
       const ethnicityStr = data.ethnicities.join(" / ");
 
+      // "Choose Later" is an explicit decision to defer the home — it is never read as a
+      // living situation, a home, or homelessness, and nothing is assigned for it.
+      const deferredHome = data.living_situation === "Choose Later";
+      const livingDesc = deferredHome ? "living situation not yet decided" : (data.living_situation || "not specified");
+
       // Build known-characters context for the prompt
       const knownRels = data.known_character_relationships || [];
       const knownChars = existingCharacters.filter(c => knownRels.some(r => r.character_id === c.id));
@@ -635,7 +644,7 @@ Return ONLY a JSON object with a "memories" array. Each memory: { title, descrip
           }).join("; ")}.`
         : "";
 
-      const charProfile = `Name: ${fullName}. Age: ${data.age_range}. Background: ${ethnicityStr}. Gender: ${data.gender}. Archetype: ${data.archetype}. Social energy: ${data.social_energy}. Vibes: ${data.vibes.join(", ")}. Living situation: ${data.living_situation}. Job: ${data.job_title || "not specified"} at a ${data.workplace_type || "workplace"}. Background story: ${data.background || "not specified"}. ${knownContext}`;
+      const charProfile = `Name: ${fullName}. Age: ${data.age_range}. Background: ${ethnicityStr}. Gender: ${data.gender}. Archetype: ${data.archetype}. Social energy: ${data.social_energy}. Vibes: ${data.vibes.join(", ")}. Living situation: ${livingDesc}. Job: ${data.job_title || "not specified"} at a ${data.workplace_type || "workplace"}. Background story: ${data.background || "not specified"}. ${knownContext}`;
 
       // Run personality + memory generation in parallel
       const memoryThemes = data.memories.length > 0
@@ -742,8 +751,9 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
         communication_style: `${data.vibes.join(", ")} communication style. Real, unpolished speech.`,
         age_range: data.age_range || undefined,
         ethnicities: data.ethnicities.length > 0 ? data.ethnicities : undefined,
-        background_story: data.background || `${data.age_range} ${ethnicityStr} ${data.gender?.toLowerCase()}. ${data.living_situation}.`,
-        current_situation: data.situation_override || data.living_situation,
+        background_story: data.background || `${data.age_range} ${ethnicityStr} ${data.gender?.toLowerCase()}.${deferredHome ? "" : ` ${data.living_situation}.`}`,
+        // No home is assigned here at all — a "Choose Later" character keeps a blank Home Location.
+        current_situation: data.situation_override || (deferredHome ? undefined : data.living_situation),
         emotional_state: "calm",
         reference_image_urls: referenceUrls.length > 0 ? referenceUrls : undefined,
         birthday: data.birthday || undefined,
@@ -870,6 +880,234 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
       alert(`Failed to create character: ${msg}`);
      }
      };
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // AI COMPLETE CHARACTER
+  //
+  // Finishes the character the User has already started, from whatever step they
+  // are on. Everything the User entered or selected is the authority: only fields
+  // that are still EMPTY are filled, and the completed character is then handed to
+  // the same handleCreate path (same save, ownership, prompts, memories) that the
+  // manual flow uses. Random creation is untouched — it starts someone from scratch.
+  // ══════════════════════════════════════════════════════════════════════════
+  const [isAiCompleting, setIsAiCompleting] = useState(false);
+  const [aiCompleteRequested, setAiCompleteRequested] = useState(false);
+
+  const isEmptyField = (v) => (Array.isArray(v) ? v.length === 0 : !String(v ?? "").trim());
+
+  const handleAiComplete = async () => {
+    if (isAiCompleting || isCreating) return;
+    if (!canCreateCharacter && !isAdmin) {
+      alert('You have reached the maximum of 4 active characters. Delete or archive one to create another.');
+      return;
+    }
+    if (!currentUser?.email || !currentUser?.id) {
+      alert('Error: Unable to determine current user. Please refresh and try again.');
+      return;
+    }
+    setIsAiCompleting(true);
+    try {
+      const next = { ...data };
+
+      // A name is required to create anyone — generate only the missing part.
+      if (isEmptyField(next.first_name) || isEmptyField(next.last_name)) {
+        const { first_name, last_name } = generateRandomName();
+        if (isEmptyField(next.first_name)) next.first_name = first_name;
+        if (isEmptyField(next.last_name)) next.last_name = last_name;
+      }
+
+      // What the User already established — passed to the model as fixed fact.
+      const established = {
+        name: [next.first_name, next.middle_name, next.last_name].filter(Boolean).join(" "),
+        gender: next.gender || null,
+        age_range: next.age_range || null,
+        ethnicities: next.ethnicities || [],
+        living_situation: next.living_situation || null,
+        archetype: next.archetype || null,
+        social_energy: next.social_energy || null,
+        sexual_orientation: next.sexual_orientation || null,
+        vibes: next.vibes || [],
+        background: next.background || null,
+        personality: next.personality_override || null,
+        current_situation: next.situation_override || null,
+        zodiac_sign: next.zodiac_sign || null,
+        birthday: next.birthday || null,
+        city: next.city || null,
+        state: next.state || null,
+        job_title: next.job_title || null,
+        workplace_type: next.workplace_type || null,
+        occupation_description: next.occupation_description || null,
+        frequented_places: next.frequented_places || [],
+        memory_titles: (next.memories || []).map(m => m.title),
+        family_members: (next.family_members || []).map(m => `${m.name} (${m.relationship_type})`),
+        known_people: (next.known_character_relationships || []).map(r => {
+          const c = existingCharacters.find(x => x.id === r.character_id);
+          return c ? `${c.name} (${r.relationship_type})` : null;
+        }).filter(Boolean),
+        traits: CHARACTER_TRAITS.filter(t => next[t.key]).map(t => t.key),
+      };
+
+      const result = await base44.integrations.Core.InvokeLLM({
+        prompt: `You are finishing a character the User has already started creating. The details under ESTABLISHED are the User's own decisions and are FIXED FACTS. Never contradict, replace, rename, re-age, re-gender, restyle or reinterpret them. Produce values ONLY for the fields that are still missing, and make every one of them fit the established character.
+
+ESTABLISHED (never change these):
+${JSON.stringify(established, null, 2)}
+
+Complete every one of these fields:
+- gender: one of ${GENDERS.join(", ")}
+- age_range: one of ${AGES.join(", ")}
+- ethnicities: 1-2 from ${ETHNICITIES.join(", ")}
+- living_situation: one of ${RANDOM_LIVING.join(", ")}
+- archetype: one of ${ARCHETYPES.map(a => a.label).join(", ")}
+- social_energy: one of ${ENERGY_SCALE.map(e => e.value).join(", ")}
+- sexual_orientation: one of ${SEXUAL_ORIENTATIONS.filter(o => o !== "Prefer not to say").join(", ")}
+- vibes: 1-4 from ${VIBES.join(", ")}
+- background: 2-3 sentences of backstory, third person, grounded, informal
+- personality: 2-3 sentences describing how they actually act, quirks and habits included, no flattery
+- current_situation: 2-3 sentences on what they are navigating in their life right now
+- zodiac_sign: one of ${ZODIAC_SIGNS.join(", ")}
+- city and state: a plausible US city and state matching their background
+- job_title: a specific job title
+- workplace_type: one of ${JOB_TYPES.join(", ")}
+- occupation_description: 2-3 sentences on a typical day at that job
+- frequented_places: 2-4 from ${PLACE_OPTIONS.join(", ")}
+- memories: 3-4 specific, grounded memories (title, description, emotional_impact, lesson_learned). At least 2 must be positive, joyful or growth-based.
+- trait_keys: 2-4 keys from this list: ${CHARACTER_TRAITS.filter(t => t.key !== "is_photogenic").map(t => t.key).join(", ")}
+
+RULES:
+- Write in third person. Real, unpolished, human. No flowery language, no therapy-speak.
+- Never use the names of real famous people, and never name family members, employers, businesses or places that do not already exist in the established details.
+- Describing a job, a home or a city never creates a business, a workplace, a property or a home — do not invent them.
+- Do not mention the app, the User, AI, or anything outside the character's own life.`,
+        response_json_schema: {
+          type: "object",
+          properties: {
+            gender: { type: "string" },
+            age_range: { type: "string" },
+            ethnicities: { type: "array", items: { type: "string" } },
+            living_situation: { type: "string" },
+            archetype: { type: "string" },
+            social_energy: { type: "string" },
+            sexual_orientation: { type: "string" },
+            vibes: { type: "array", items: { type: "string" } },
+            background: { type: "string" },
+            personality: { type: "string" },
+            current_situation: { type: "string" },
+            zodiac_sign: { type: "string" },
+            city: { type: "string" },
+            state: { type: "string" },
+            job_title: { type: "string" },
+            workplace_type: { type: "string" },
+            occupation_description: { type: "string" },
+            frequented_places: { type: "array", items: { type: "string" } },
+            memories: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  title: { type: "string" },
+                  description: { type: "string" },
+                  emotional_impact: { type: "string" },
+                  lesson_learned: { type: "string" }
+                }
+              }
+            },
+            trait_keys: { type: "array", items: { type: "string" } }
+          }
+        }
+      });
+
+      // ── MERGE: only into fields that are still empty. A field the User filled — or
+      // explicitly deferred, like "Choose Later" — is never touched.
+      const fill = (field, value) => {
+        if (value === undefined || value === null) return;
+        if (!isEmptyField(next[field])) return;
+        if (isEmptyField(value)) return;
+        next[field] = value;
+      };
+
+      fill("gender", GENDERS.find(g => g.toLowerCase() === String(result?.gender || "").trim().toLowerCase()));
+      fill("age_range", AGES.includes(result?.age_range) ? result.age_range : undefined);
+      fill("ethnicities", Array.isArray(result?.ethnicities) ? result.ethnicities.filter(e => ETHNICITIES.includes(e)).slice(0, 2) : undefined);
+      // The AI never selects the deferral — that is the User's decision alone.
+      fill("living_situation", RANDOM_LIVING.includes(result?.living_situation) ? result.living_situation : undefined);
+      fill("archetype", ARCHETYPES.some(a => a.label === result?.archetype) ? result.archetype : undefined);
+      fill("social_energy", ENERGY_SCALE.some(e => e.value === result?.social_energy) ? result.social_energy : undefined);
+      fill("sexual_orientation", SEXUAL_ORIENTATIONS.includes(result?.sexual_orientation) ? result.sexual_orientation : undefined);
+      fill("vibes", Array.isArray(result?.vibes) ? result.vibes.filter(v => VIBES.includes(v)).slice(0, 4) : undefined);
+      fill("background", result?.background);
+      fill("personality_override", result?.personality);
+      fill("situation_override", result?.current_situation);
+      fill("city", result?.city);
+      fill("state", result?.state);
+      fill("job_title", result?.job_title);
+      fill("workplace_type", JOB_TYPES.includes(result?.workplace_type) ? result.workplace_type : undefined);
+      fill("occupation_description", result?.occupation_description);
+      fill("frequented_places", Array.isArray(result?.frequented_places) ? result.frequented_places.filter(p => PLACE_OPTIONS.includes(p)).slice(0, 4) : undefined);
+
+      if (isEmptyField(next.zodiac_sign) && ZODIAC_SIGNS.includes(result?.zodiac_sign)) {
+        next.zodiac_sign = result.zodiac_sign;
+        if (isEmptyField(next.birthday) && next.age_range) {
+          const bd = calculateBirthdateFromZodiac(next.zodiac_sign, next.age_range);
+          if (bd) next.birthday = bd;
+        }
+      }
+
+      if (isEmptyField(next.memories) && Array.isArray(result?.memories)) {
+        const mems = result.memories
+          .filter(m => m?.title)
+          .slice(0, 4)
+          .map(m => ({
+            title: m.title,
+            description: m.description || "",
+            emotional_impact: m.emotional_impact || "",
+            lesson_learned: m.lesson_learned || "",
+          }));
+        if (mems.length > 0) next.memories = mems;
+      }
+
+      if (Array.isArray(result?.trait_keys)) {
+        result.trait_keys
+          .filter(k => k !== "is_photogenic" && CHARACTER_TRAITS.some(t => t.key === k))
+          .slice(0, 4)
+          .forEach(k => { if (!next[k]) next[k] = true; });
+      }
+
+      setData(next);
+      saveDraft(next, step, avatarUrl, referenceUrls);
+      setIsAiCompleting(false);
+
+      // The fields creation already treats as required must be present before the
+      // character is saved. If the model left one out, keep the User's work and say so
+      // instead of saving an incomplete character.
+      const stillMissing = [
+        ["gender", next.gender],
+        ["age range", next.age_range],
+        ["archetype", next.archetype],
+        ["social energy", next.social_energy],
+      ].filter(([, v]) => isEmptyField(v)).map(([label]) => label);
+      if (isEmptyField(next.vibes)) stillMissing.push("vibes");
+      if (stillMissing.length > 0) {
+        alert(`AI completed most of this character but could not fill: ${stillMissing.join(", ")}. Everything you entered is unchanged — fill those in and try again.`);
+        return;
+      }
+
+      // Hand the completed character to the established creation + save path.
+      setAiCompleteRequested(true);
+    } catch (err) {
+      setIsAiCompleting(false);
+      // Nothing the User entered is changed — they can retry or keep going manually.
+      alert(`AI could not complete this character: ${err?.message || "Unknown error"}. Nothing you entered was changed — you can try again or finish manually.`);
+    }
+  };
+
+  // Runs once the completed data has been committed to state, so handleCreate reads
+  // the finished character instead of the pre-completion snapshot.
+  useEffect(() => {
+    if (!aiCompleteRequested) return;
+    setAiCompleteRequested(false);
+    handleCreate();
+  }, [aiCompleteRequested]);
 
   const chipClass = (selected) =>
     `py-2.5 px-3 rounded-xl text-sm border transition-colors text-left cursor-pointer ${selected ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-foreground hover:border-primary/40"}`;
@@ -1454,6 +1692,27 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
             </Button>
           )}
         </div>
+
+        {/* AI Complete Character — on every step, directly beneath Back / Next and above
+            Cancel Character. It finishes the character the User already started and keeps
+            everything they entered. Random still creates someone from scratch. */}
+        <div className="mt-3">
+          <Button
+            variant="outline"
+            onClick={handleAiComplete}
+            disabled={isAiCompleting || isCreating || (!canCreateCharacter && !isAdmin)}
+            className="w-full h-12 rounded-xl gap-2 border-primary/40 text-primary hover:text-primary hover:border-primary/60 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Sparkles className="w-4 h-4" />
+            {isAiCompleting ? "Completing character..." : "AI Complete Character"}
+          </Button>
+          <p className="text-[11px] text-muted-foreground text-center mt-2 leading-tight">
+            {isAiCompleting
+              ? "Filling in the details you haven't set yet — your entries stay exactly as they are."
+              : "Keeps everything you've entered and fills in the rest."}
+          </p>
+        </div>
+
         {step === 0 && (
           <div className="mt-3">
             <Button

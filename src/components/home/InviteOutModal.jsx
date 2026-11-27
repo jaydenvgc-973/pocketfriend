@@ -4,7 +4,23 @@ import { Button } from '@/components/ui/button';
 import { MapPin, Home, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 
-export default function InviteOutModal({ invitations, onAccept, onDecline, onMaybeLater, onSuggestAlternative, onClose }) {
+/**
+ * InviteOutModal — a character invites the User out.
+ *
+ * Button arrangement (two columns, consistent sizing):
+ *   Carry on without me | ✅ Let's go
+ *   Maybe later         | ❌ Decline
+ *
+ * "Carry on without me" lets the character continue their own plan alone: they move to
+ * the invited place through the established location writer when it is somewhere else,
+ * and stay put when the invitation is to where they already are. The User never moves,
+ * never opens a scene, and stays on the page the modal was opened from.
+ */
+// Every invitation button shares one footprint, so a longer label wraps inside its own
+// cell instead of widening the modal or overflowing a phone.
+const inviteBtnClass = "rounded-lg h-auto min-h-[40px] px-2 py-2 text-[11px] leading-tight whitespace-normal text-center disabled:opacity-50";
+
+export default function InviteOutModal({ invitations, onAccept, onDecline, onMaybeLater, onCarryOn, onClose, busy = false }) {
   const [selectedIdx, setSelectedIdx] = React.useState(0);
   
   if (!invitations || invitations.length === 0) return null;
@@ -74,40 +90,35 @@ export default function InviteOutModal({ invitations, onAccept, onDecline, onMay
           ))}
         </div>
 
+        {/* Two equal columns. Every button shares the same footprint so the longer
+            "Carry on without me" label wraps inside its own cell instead of widening
+            the modal or overflowing a phone. */}
         <div className="grid grid-cols-2 gap-2">
-          <Button
-            onClick={() => onDecline(selectedInv)}
-            variant="outline"
-            size="sm"
-            className="rounded-lg text-xs"
-          >
-            ❌ Decline
-          </Button>
-          <Button
-            onClick={() => onAccept(selectedInv)}
-            size="sm"
-            className="rounded-lg gap-1 text-xs"
-          >
-            ✅ Let's go
-          </Button>
-          {onMaybeLater && (
-            <Button
-              onClick={() => onMaybeLater(selectedInv)}
-              variant="outline"
-              size="sm"
-              className="rounded-lg text-xs"
-            >
-              ⏳ Maybe later
+          {/* Row 1: Carry on without me | ✅ Let's go
+              Row 2: Maybe later         | ❌ Decline
+              A screen that offers only the two original options (a scene) keeps its own
+              unchanged pair — Decline | Let's go — because it never passes onCarryOn. */}
+          {!onCarryOn && (
+            <Button onClick={() => onDecline(selectedInv)} variant="outline" size="sm" disabled={busy} className={inviteBtnClass}>
+              ❌ Decline
             </Button>
           )}
-          {onSuggestAlternative && (
-            <Button
-              onClick={() => onSuggestAlternative(selectedInv)}
-              variant="outline"
-              size="sm"
-              className="rounded-lg text-xs"
-            >
-              🔄 Suggest alternative
+          {onCarryOn && (
+            <Button onClick={() => onCarryOn(selectedInv)} variant="outline" size="sm" disabled={busy} className={inviteBtnClass}>
+              Carry on without me
+            </Button>
+          )}
+          <Button onClick={() => onAccept(selectedInv)} size="sm" disabled={busy} className={inviteBtnClass}>
+            ✅ Let's go
+          </Button>
+          {onCarryOn && onMaybeLater && (
+            <Button onClick={() => onMaybeLater(selectedInv)} variant="outline" size="sm" disabled={busy} className={inviteBtnClass}>
+              Maybe later
+            </Button>
+          )}
+          {onCarryOn && (
+            <Button onClick={() => onDecline(selectedInv)} variant="outline" size="sm" disabled={busy} className={inviteBtnClass}>
+              ❌ Decline
             </Button>
           )}
         </div>

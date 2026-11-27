@@ -38,6 +38,8 @@ export default function Home() {
   const [showTroubleshooting, setShowTroubleshooting] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [invitations, setInvitations] = useState(null);
+  // Guards "Carry on without me" so a second tap cannot teleport twice.
+  const [carryOnBusy, setCarryOnBusy] = useState(false);
   const [pendingReleases, setPendingReleases] = useState([]);
   const [graduationEvents, setGraduationEvents] = useState([]);
 
@@ -516,6 +518,10 @@ export default function Home() {
         onClose={() => setShowTroubleshooting(false)}
         ownerEmail={currentUser?.email}
       />
+      {/* Carry on without me: the character continues their own plan alone. They move to the
+          invited place only if they are not already there, through the established
+          updateCharacterLocation writer (which owns every movement restriction). The User's
+          location, page and scene state are never touched. */}
       {invitations && (
         <InviteOutModal
           invitations={invitations}
@@ -541,10 +547,45 @@ export default function Home() {
             const remaining = invitations.filter(i => i.characterId !== inv.characterId);
             setInvitations(remaining.length > 0 ? remaining : null);
           }}
-          onSuggestAlternative={(inv) => {
-            const remaining = invitations.filter(i => i.characterId !== inv.characterId);
-            setInvitations(remaining.length > 0 ? remaining : null);
+          onCarryOn={async (inv) => {
+            if (carryOnBusy) return;
+            setCarryOnBusy(true);
+            try {
+              const char = allCharacters.find(c => c.id === inv.characterId);
+              const alreadyThere = char && (
+                char.resolved_current_location_id === inv.locationId ||
+                (!char.resolved_current_location_id && char.resolved_current_location_name === inv.locationName)
+              );
+              if (!alreadyThere) {
+                const res = await base44.functions.invoke("updateCharacterLocation", {
+                  characterId: inv.characterId,
+                  locationId: inv.locationId,
+                  locationName: inv.locationName,
+                  presenceStatus: "visiting",
+                  locationType: "visit",
+                  sourceReason: "invite_carry_on_without_user",
+                });
+                const result = res?.data || res;
+                if (result?.success === false) {
+                  throw new Error(result?.reason || result?.error || "Move was not confirmed");
+                }
+              }
+              // Resolve through the existing invitation lifecycle so it does not reappear.
+              const remaining = invitations.filter(i => i.characterId !== inv.characterId);
+              setInvitations(remaining.length > 0 ? remaining : null);
+              if (settings[0]?.id) {
+                await base44.entities.UserSettings.update(settings[0].id, {
+                  pending_character_invites: remaining,
+                }).catch(() => {});
+                queryClient.invalidateQueries({ queryKey: ["userSettings"] });
+              }
+            } catch (err) {
+              alert(`Could not let ${inv.characterName} carry on: ${err?.message || "the move was not confirmed"}.`);
+            } finally {
+              setCarryOnBusy(false);
+            }
           }}
+          busy={carryOnBusy}
           onDecline={(inv) => {
             // Character still goes — user declined the invite but the character had their own plan
             base44.functions.invoke('recordCharacterInviteDeclined', {
