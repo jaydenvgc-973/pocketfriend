@@ -74,6 +74,10 @@ Deno.serve(async (req) => {
       .catch(() => [])
     : [];
   const expired = temporary.filter((c) =>
+    // Permanence is the authority: an NPC the user made permanent through NPC Connect
+    // is no longer temporary, so a lifespan registered before that decision can never
+    // remove them — whatever the old timestamp says.
+    c.is_temporary_npc === true &&
     c.temporary_npc_expires_at &&
     c.temporary_npc_expires_at <= nowIso &&
     c.status !== 'deleted' &&

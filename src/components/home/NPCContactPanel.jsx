@@ -149,8 +149,12 @@ export default function NPCContactPanel() {
   // so the scheduled removal no longer applies to them.
   const handleMakePermanent = async (npc) => {
     try {
+      // The same record, the same character. Permanence is the flag: it ends the
+      // lifespan and leaves the registration empty, so the pending expiration finds
+      // nothing to remove.
       await base44.entities.Character.update(npc.id, {
         is_temporary_npc: false,
+        temporary_npc_spawned_at: null,
         temporary_npc_expires_at: null,
       });
       queryClient.invalidateQueries({ queryKey: ['npc-characters', currentUser?.id] });
