@@ -1,4 +1,5 @@
 import { getUnitForCharacter, getUnitKind, getUnitLabel } from "@/lib/residentialUnits";
+import { getLocationWorkplaces } from "@/lib/locationWorkspaces";
 
 /**
  * ResidentPresenceList
@@ -9,7 +10,9 @@ import { getUnitForCharacter, getUnitKind, getUnitLabel } from "@/lib/residentia
  * height instead of stretching the travel panel.
  *
  * Residency comes from the property's own unit assignments — a resident who is out is
- * still listed under their apartment, marked as out.
+ * still listed under their apartment, marked as out. People physically at one of the
+ * property's own Workspaces are listed under that Workspace; "Others here" is only for
+ * people genuinely present in the property's general space.
  */
 
 const LIST_MAX_HEIGHT = "11rem";
@@ -24,18 +27,10 @@ const renderLine = (line, i) => (
 export default function ResidentPresenceList({ lines = [], units = [], location = null, residentIds = [] }) {
   if (lines.length === 0) return null;
 
-  if (units.length === 0) {
-    return (
-      <div className="overflow-y-auto pr-1" style={{ maxHeight: LIST_MAX_HEIGHT }}>
-        <div className={lines.length > 4 ? "grid grid-cols-2 gap-x-3 gap-y-0.5" : "space-y-0.5"}>
-          {lines.map(renderLine)}
-        </div>
-      </div>
-    );
-  }
-
   const grouped = [];
   const placed = new Set();
+
+  // 1. Residents under the apartment, room or cell they are assigned to.
   units.forEach((unit) => {
     const residents = lines.filter((line) => {
       if (!line.id) return false;
@@ -45,6 +40,35 @@ export default function ResidentPresenceList({ lines = [], units = [], location 
     residents.forEach((r) => placed.add(r));
     grouped.push({ key: unit.unit_id, label: getUnitLabel(unit.unit_name, location), lines: residents });
   });
+
+  // 2. PEOPLE PHYSICALLY AT A NAMED WORKSPACE.
+  // A property can keep its own businesses (Agency (NJ) inside Gateway House). Someone
+  // on shift inside one of them is at that workspace — not standing in the building's
+  // general area. A line qualifies only when the authoritative presence already put them
+  // at this location on shift AND the property's own workplace record already claims them
+  // as its employee. Employment alone never places anyone here: a worker who is home,
+  // out, hospitalized or elsewhere is not in this list at all.
+  getLocationWorkplaces(location).forEach((workplace) => {
+    const onShift = lines.filter((line) => {
+      if (!line.id || placed.has(line)) return false;
+      if (line.status !== "working") return false;
+      return (workplace.worker_character_ids || []).includes(line.id);
+    });
+    if (onShift.length === 0) return;
+    onShift.forEach((line) => placed.add(line));
+    grouped.push({ key: workplace.workplace_id, label: workplace.name, lines: onShift });
+  });
+
+  // Nothing to group under — no unit and no workspace — keeps the plain compact list.
+  if (grouped.length === 0) {
+    return (
+      <div className="overflow-y-auto pr-1" style={{ maxHeight: LIST_MAX_HEIGHT }}>
+        <div className={lines.length > 4 ? "grid grid-cols-2 gap-x-3 gap-y-0.5" : "space-y-0.5"}>
+          {lines.map(renderLine)}
+        </div>
+      </div>
+    );
+  }
 
   // Anyone not attached to a unit: residents without an apartment assignment stay
   // listed as residents; visitors and staff present right now are not residents.

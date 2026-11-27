@@ -28,6 +28,7 @@ async function resolveEmploymentLink(sr, locationId, characterId) {
   const workplaces = Array.isArray(loc.workplaces) ? loc.workplaces : [];
   const workplace = workplaces.find((w) => (w?.worker_character_ids || []).includes(characterId)) || null;
   return {
+    location_id: locationId,
     location_name: loc.name || null,
     employer_name: workplace?.name || null,
     workplace_name: workplace?.name || null,
@@ -64,16 +65,26 @@ Deno.serve(async (req) => {
       if (link) resolved.push(link);
     }
 
+    // The property's own workplace record, by location id. The canonical prompt reads this
+    // for its WORKPLACE line so it names the business rather than the building — one
+    // resolution, used by both, so the two can never name different employers.
+    const workplaceByLocation = {};
+    resolved.forEach((r) => {
+      if (r.workplace_name && r.location_id) {
+        workplaceByLocation[r.location_id] = { workplace_name: r.workplace_name, location_name: r.location_name };
+      }
+    });
+
     // Only a property that keeps businesses inside it needs this clarification: either the
     // character is employed by one of those businesses, or by none of them. A standalone
     // business whose name is also its location is already stated once.
     const split = resolved.filter((r) => r.has_workplaces);
-    if (split.length === 0) return Response.json({ employmentBlock: '', employers: [] });
+    if (split.length === 0) return Response.json({ employmentBlock: '', employers: [], workplaceByLocation });
 
     const lines = split.map((r) => {
       const title = (r.job_title || '').trim();
       if (r.employer_name) {
-        return `- Employer: ${r.employer_name} — the business that employs you and pays you.${title ? ` Your position: ${title}.` : ''}\n  Physical workplace: ${r.location_name} — the building ${r.employer_name} operates inside. You go there to work, but ${r.location_name} itself does not employ you and living in it would never make it your employer.`;
+        return `- Employer: ${r.employer_name} — the business that employs you and pays you.${title ? ` Your position: ${title}.` : ''}\n  Physical workplace: ${r.location_name} — the building ${r.employer_name} operates inside. You go there to work, but ${r.location_name} itself does not employ you and living in it would never make it your employer. If anything else in your context names ${r.location_name} as your workplace, that is the address you report to, never the company that employs you — the company is ${r.employer_name}.`;
       }
       const others = r.other_businesses?.length ? ` (${r.other_businesses.join(', ')})` : '';
       return `- ${r.location_name} is the building where you live, not an employer. It contains its own businesses${others}, and none of them employs you, so neither ${r.location_name} nor any business inside it is your job. Do not name any of them as your employer, and never treat your residence as employment.`;
@@ -88,6 +99,7 @@ Deno.serve(async (req) => {
 
     return Response.json({
       employmentBlock,
+      workplaceByLocation,
       employers: split.map((r) => ({
         employer_name: r.employer_name,
         location_name: r.location_name,

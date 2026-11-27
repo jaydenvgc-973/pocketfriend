@@ -503,7 +503,7 @@ function getWorkScheduleState(character, now = new Date()) {
 // Both checks read the space the character actually lives in, and are shared with the
 // Places page so a city's apartment is never described as an encampment: ./housingTruth.ts
 
-function buildHardFacts(character, hasActiveStoryEvent = false) {
+function buildHardFacts(character, hasActiveStoryEvent = false, employmentWorkplaces = null) {
   const lines = [];
 
   // ── SCHEDULE AUTHORITY — stated on every build so a finished shift is never "at work"
@@ -640,7 +640,11 @@ function buildHardFacts(character, hasActiveStoryEvent = false) {
   // Work — persistent profile facts. During an active Story Event these remain true
   // (the character still has this job) but do NOT describe the current lived situation.
   if (character.occupation) lines.push(`OCCUPATION: ${character.occupation} — identity and history only, never a location${hasActiveStoryEvent ? '; your current activities come from the active Story Event above' : '; CURRENT LOCATION outranks it'}.`);
-  if (character.occupation_location_name) lines.push(`WORKPLACE: ${character.occupation_location_name} — never speak or act as if they are there unless CURRENT LOCATION says so${hasActiveStoryEvent ? '; the Story Event venue governs' : ''}.`);
+  if (character.occupation_location_name) {
+    // A business inside a larger property is the workplace; the property is only its building. Same employment record the EMPLOYMENT IDENTITY block reads, so the two never disagree.
+    const wp = employmentWorkplaces?.[character.occupation_location_id] || null;
+    lines.push(`WORKPLACE: ${wp?.workplace_name ? `${wp.workplace_name} — the business inside ${wp.location_name}` : character.occupation_location_name} — never speak or act as if they are there unless CURRENT LOCATION says so${hasActiveStoryEvent ? '; the Story Event venue governs' : ''}.`);
+  }
 
   // ── EMPLOYMENT EXPERIENCE PRINCIPLE — global, character-derived. No default attitude
   // toward work: experience comes from the character and the actual workday.
@@ -1144,7 +1148,7 @@ function buildResearchFindingsBlock(webLookups) {
 }
 
 // ── FULL CANONICAL SYSTEM PROMPT ─────────────────────────────────────────────
-function buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock = '', recentMessageBlock = '', coPresence = null, userBirthdayFact = null, educationBlock = '', todayLocationBlock = '', worshipLocation = null, familyGraphBlock = '', wardrobeBlock = '', selfClothingBlock = '', clothingAwarenessBlock = '', userGender = null, activeStoryEventBlock = '', employmentIdentityBlock = '') {
+function buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock = '', recentMessageBlock = '', coPresence = null, userBirthdayFact = null, educationBlock = '', todayLocationBlock = '', worshipLocation = null, familyGraphBlock = '', wardrobeBlock = '', selfClothingBlock = '', clothingAwarenessBlock = '', userGender = null, activeStoryEventBlock = '', employmentIdentityBlock = '', employmentWorkplaces = null) {
   const userNameLabel = character.nickname_for_user || worldName || null;
 
   const highTriggers = (character.emotional_triggers_high || []).join('\n  - ');
@@ -1165,7 +1169,7 @@ function buildFullCanonicalPrompt(character, memories, worldName, interactionCon
 
   const ageCommunicationBlock = buildAgeCommunicationBlock(character);
   const modeBlock = buildModeBlock(interactionContext);
-  const hardFacts = buildHardFacts(character, !!activeStoryEventBlock);
+  const hardFacts = buildHardFacts(character, !!activeStoryEventBlock, employmentWorkplaces);
   // NOTE: worldStateContinuity is now delegated to reconcileWorldStateForResponse
   // which is called at the Chat level before this function is invoked
   const coPresenceBlock = buildCoPresenceBlock(coPresence, character);
@@ -2170,14 +2174,14 @@ Deno.serve(async (req) => {
     }
 
     // Step 12e: employment identity (delegate, READ-ONLY) — actual employer vs physical workplace
-    let employmentIdentityBlock = '';
+    let employmentIdentityBlock = ''; let employmentWorkplaces = null;
     try {
       const empRes = await base44.functions.invoke('buildEmploymentIdentityBlock', { characterId, occupationLocationId: character.occupation_location_id || null, additionalOccupationLocations: character.additional_occupation_locations || [] });
-      employmentIdentityBlock = (empRes?.data || empRes)?.employmentBlock || '';
+      employmentIdentityBlock = (empRes?.data || empRes)?.employmentBlock || ''; employmentWorkplaces = ((empRes?.data || empRes) || {}).workplaceByLocation || null;
     } catch (empErr) { console.warn('[buildCanonicalCharacterContext] employment_identity failed:', empErr.message); }
 
     // travelContextBlock + communityEventsBlock injected alongside todayLocationBlock
-    const systemPrompt = buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock, worldStateContext + travelContextBlock + communityEventsBlock + worldPhoneAwarenessBlock + commitmentAwarenessBlock + weeklyPublicationBlock + novelAwarenessBlock + recentMessageBlock, coPresence, userBirthdayFact, educationBlock, todayLocationBlock, worshipLocation, familyGraphBlock, wardrobeBlock, selfClothingBlock, clothingAwarenessBlock, settings?.user_gender || null, activeStoryEventBlock, employmentIdentityBlock);
+    const systemPrompt = buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock, worldStateContext + travelContextBlock + communityEventsBlock + worldPhoneAwarenessBlock + commitmentAwarenessBlock + weeklyPublicationBlock + novelAwarenessBlock + recentMessageBlock, coPresence, userBirthdayFact, educationBlock, todayLocationBlock, worshipLocation, familyGraphBlock,       wardrobeBlock, selfClothingBlock, clothingAwarenessBlock, settings?.user_gender || null, activeStoryEventBlock, employmentIdentityBlock, employmentWorkplaces);
 
     // ── VICK SERVICIO DIAGNOSTIC AUTHORITY OVERRIDE ──────────────────────────
     // Vick is the conversational face of the Account Help & Repair system.
