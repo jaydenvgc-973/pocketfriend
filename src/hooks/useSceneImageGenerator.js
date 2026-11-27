@@ -110,6 +110,10 @@ export function useSceneImageGenerator({ transcript = [], getActiveSpace = null 
       // A picture that fails is never replaced by a place's fallback image: the picture
       // already on screen stays.
       keepImageOnFailure = false,
+      // Told when a picture could not be drawn at all (the provider refused it, or the
+      // request failed). The caller says so in the scene's own feed instead of leaving an
+      // empty room looking like the completed activity.
+      onImageError = null,
       // How many of each person's own reference images may be used. A ride spends the
       // budget on the vehicle's views, so each occupant keeps their avatar only.
       maxRefsPerPerson = 2,
@@ -353,6 +357,7 @@ export function useSceneImageGenerator({ transcript = [], getActiveSpace = null 
       } catch {
         // A failed picture never becomes a picture of somewhere else: the current image stays.
         if (!keepImageOnFailure) commit(zoneFallbackImage);
+        if (onImageError) onImageError();
       } finally { if (isCurrent()) setIsGeneratingImage(false); }
       return;
     }
@@ -396,6 +401,7 @@ export function useSceneImageGenerator({ transcript = [], getActiveSpace = null 
         commit(result.url);
       } catch {
         commit(zoneFallbackImage);
+        if (onImageError) onImageError();
       } finally {
         if (isCurrent()) setIsGeneratingImage(false);
       }
@@ -432,6 +438,7 @@ export function useSceneImageGenerator({ transcript = [], getActiveSpace = null 
       commit(result.url);
     } catch {
       commit(zoneFallbackImage);
+      if (onImageError) onImageError();
     } finally {
       if (isCurrent()) setIsGeneratingImage(false);
     }

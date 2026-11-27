@@ -94,10 +94,13 @@ export const ACTION_IMAGE_PROMPTS = {
   home_brush_teeth:(loc, who) => who.includes("empty")
     ? `A toothbrush and toothpaste beside a water source, no people, photorealistic.`
     : `${who} brushing their teeth — toothbrush in mouth, toothpaste foam — using the water source this space actually has, photorealistic. No other people.`,
-  // A shower is a shower wherever the water comes from: a stall, a portable unit, a bag.
+  // Washing happens wherever the water actually is: a shower stall, a portable unit, or a
+  // basin, a bottle and a washcloth inside a tent. The body is always covered by a towel —
+  // a picture that asks for an unclothed figure is refused by the image provider, the
+  // request fails, and the activity ends with no picture at all.
   home_shower:     (loc, who) => who.includes("empty")
     ? `A running shower with steam rising, no people, photorealistic.`
-    : `${who} taking a shower, unclothed — no clothing, no towel worn — water running, steam, wet hair, body concealed by steam and the partition or the camera angle, seen from behind or from the shoulders up, tasteful and non-explicit, photorealistic. No other people.`,
+    : `${who} washing — under running water, or with the basin, bottle and washcloth this space actually has — a towel wrapped around the waist or draped over the shoulders, water on the skin, wet hair, steam, seen from behind or from the shoulders up, tasteful and non-explicit, photorealistic. No other people.`,
   home_make_bed:   (loc, who) => who.includes("empty")
     ? `A neatly made bed with a folded duvet and arranged pillows, no people, photorealistic.`
     : `${who} making the bed — smoothing the duvet, tucking sheets, fluffing a pillow, photorealistic. No other people.`,
@@ -131,7 +134,7 @@ export const ACTION_IMAGE_PROMPTS = {
   jail_head_count:     (loc, who) => `Correctional officers in uniform moving through a prison cellblock conducting a head count, inmates in plain tank tops or bare-chested, in institutional trousers, standing beside their bunks, a clipboard in hand, institutional lighting, photorealistic.`,
   jail_line_up:        (loc, who) => `Inmates in plain tank tops or bare-chested, in institutional trousers, standing in a straight line along a cellblock wall during count, hands visible, correctional officers in uniform walking the line, photorealistic.`,
   jail_meal_tray:      (loc, who) => `${who.includes("empty") ? "A compartmented meal tray" : `${who} carrying a compartmented meal tray`} along the serving line in a prison cafeteria, food on the tray, stainless steel counter, plain tank top, photorealistic.`,
-  jail_shower:         (loc, who) => `${who.includes("empty") ? "An empty prison shower stall with water running" : `${who} showering at a wall-mounted shower head in the prison shower area — unclothed, no uniform, no towel, no clothing; body concealed by steam, running water and the camera angle, seen from behind or from the shoulders up, tasteful and non-explicit`}, tiled institutional walls, photorealistic.`,
+  jail_shower:         (loc, who) => `${who.includes("empty") ? "An empty prison shower stall with water running" : `${who} showering at a wall-mounted shower head in the prison shower area — a towel wrapped around the waist, body further concealed by steam, running water and the camera angle, seen from behind or from the shoulders up, tasteful and non-explicit`}, tiled institutional walls, photorealistic.`,
   jail_exercise:       (loc, who) => `Inmates in plain tank tops or bare-chested, in shorts or institutional trousers, doing push-ups and pull-ups in a prison exercise yard, chain-link fence behind them, physical effort, daylight, photorealistic.`,
   jail_change_clothing:(loc, who) => `An inmate in a plain facility uniform receiving a stack of folded institutional uniforms across a counter at the prison clothing exchange, no lettering on the fabric, photorealistic.`,
   jail_read_write:     (loc, who) => `An inmate in a plain tank top or bare-chested, in institutional trousers, sitting on a prison bunk writing on paper with a pencil, a worn paperback beside them, dim cell lighting, photorealistic.`,
@@ -205,13 +208,17 @@ export const SHOWER_ACTION_IDS = ["home_shower", "jail_shower"];
 
 /**
  * The mandatory shower state appended to any image generated for a shower.
- * Unclothed, never in a uniform or a towel; the frame stays non-explicit because the
- * body is concealed by steam, water, the partition and the camera angle. Clothing in a
- * reference photo belongs to that photo and is ignored. Staff who are not in the shower
- * stay outside the water and keep their uniform. Nobody under 18 is ever shown unclothed.
+ *
+ * Whoever is washing stays covered — a towel, the steam, the running water, the partition
+ * and the camera angle — and the frame is never explicit. That is both the appropriate
+ * picture and the only one the image provider will produce: a prompt that asks for an
+ * unclothed figure is filtered out, the request fails, and the activity ends with the
+ * place's own empty reference image instead of the moment. Clothing in a reference photo
+ * belongs to that photo and is ignored. Staff who are not washing stay outside the water
+ * and keep their uniform. Nobody under 18 is ever shown in any state of undress.
  */
 export function buildShowerStateRule() {
-  return ` SHOWER STATE — MANDATORY: everyone in the shower is unclothed — no clothing, no uniform, no towel worn, no swimwear. Ignore any clothing visible in the supplied reference photos: it belongs to the reference, not to this moment. The frame stays tasteful and non-explicit — bodies are concealed by steam, running water, the shower partition and the camera angle (shoulders up, from behind, or behind frosted glass), and no explicit nudity is shown. Anyone who is NOT in the shower (a guard or officer standing outside the shower row, staff, a visitor) stays outside the water and keeps their own clothing or uniform. No one is ever depicted standing in a shower fully dressed: any other figure visible in the shower area is also showering and unclothed. Never depict a person under 18 unclothed.`;
+  return ` SHOWER STATE — MANDATORY: whoever is washing stays covered — a towel wrapped around the waist or draped over the shoulders, with the body further concealed by steam, running water, a shower partition or curtain, and the camera angle (shoulders up, from behind, or behind frosted glass). Never depict a nude, bare or partially clothed figure, and never state that anyone is unclothed. The frame stays tasteful and non-explicit at every moment. Ignore any clothing visible in the supplied reference photos: it belongs to the reference, not to this moment. Anyone who is NOT washing (a guard or officer standing outside the shower row, staff, a visitor) stays outside the water and keeps their own clothing or uniform. Never depict a person under 18 in any state of undress.`;
 }
 
 // ── EATING / DRINKING ACTIVITIES ──────────────────────────────────────────────
