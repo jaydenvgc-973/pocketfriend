@@ -242,7 +242,7 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
                 const unhousedGroup = group.key === 'unhoused_living_space';
                 return (
                 <div key={group.key}>
-                <SectionHeader icon={Building} label={unhousedGroup ? 'Unhoused Living Spaces' : location.category === 'hotel' ? 'Rooms / Units' : 'Apartments'} />
+                <SectionHeader icon={Building} label={unhousedGroup ? 'Unhoused Living Spaces' : location.category === 'generic' ? 'Apartments & Homes' : location.category === 'hotel' ? 'Rooms / Units' : 'Apartments'} />
               <div className="space-y-1.5">
                 {sortUnits(group.units).map(unit => {
                   const occupants = (unit.occupant_character_ids || []).map(id => {

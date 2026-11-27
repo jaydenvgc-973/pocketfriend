@@ -653,6 +653,9 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
 
   // An established place to stay that is not housing. Always outdoors, and never a home.
   const isUnhoused = isUnhousedLivingSpace(form);
+  // A parent that also holds apartments and houses is not itself an encampment: only a place
+  // whose living arrangements are wholly unhoused is described as one.
+  const isWhollyUnhoused = isUnhoused && !hasHousedVenueType(form);
 
   // What kind of leadership this place has follows what the place IS. A city's roles are
   // municipal; a country's are national; an ordinary property keeps its owner/manager roles.
@@ -971,7 +974,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
           Indoors or outdoors — independent of category, venue type and Environment.
           An Unhoused Living Space is always outdoors: shelter from the weather never
           turns an encampment, a tent or a sidewalk into an indoor residence. */}
-      {isUnhoused ? (
+      {isWhollyUnhoused ? (
         <div className="rounded-xl border border-border bg-secondary/30 px-3 py-2.5">
           <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Physical Setting: Outdoor</p>
           <p className="text-[11px] text-muted-foreground mt-0.5">
@@ -1163,7 +1166,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                             ))}
                           </div>
                         )}
-                        {isUnhoused && (
+                        {isWhollyUnhoused && (
                           <p className="text-[10px] text-muted-foreground">
                             🌙 Homeless — this is an established place to stay, not housing.
                           </p>

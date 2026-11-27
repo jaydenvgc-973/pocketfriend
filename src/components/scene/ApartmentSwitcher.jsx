@@ -151,7 +151,7 @@ export default function ApartmentSwitcher({
           className="fixed z-[80] bg-card border border-border rounded-xl shadow-xl overflow-hidden"
         >
           <div className="px-3 py-2 border-b border-border">
-            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">{kind.heading}</p>
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">{location?.category === "generic" ? "Spaces" : kind.heading}</p>
           </div>
           <div className="overflow-y-auto py-1" style={{ maxHeight: pos.listMax }}>
             {allowNone && (
