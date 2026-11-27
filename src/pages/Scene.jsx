@@ -365,8 +365,8 @@ export default function Scene() {
   // through Who's Here and join only when the user actually selects them. Nobody is
   // moved, and a single-household home (which has no such spaces) is untouched.
   const privateSpaceOccupantIds = useMemo(
-    () => (!activeUnitId ? getPrivateSpaceOccupantIds(location, characters) : new Set()),
-    [location?.id, activeUnitId, locationUnits.length, locationWorkplaces.length, characters.length]
+    () => (!activeUnitId ? getPrivateSpaceOccupantIds(location, characters, unifiedPresenceEntities) : new Set()),
+    [location?.id, activeUnitId, locationUnits.length, locationWorkplaces.length, characters.length, unifiedPresenceEntities]
   );
 
   // WHO IS IN THIS SPACE RIGHT NOW — the physical-presence half of Who's Here.
@@ -503,7 +503,8 @@ export default function Scene() {
   })();
 
   const onShiftIds = new Set(workerCharacters.map((w) => w.id));
-  const homeResidentIds = new Set(homeResidentsPresent.map((r) => r.id));
+  // A property's own units are home for their people even when it is a city, not one household.
+  const homeResidentIds = new Set([...homeResidentsPresent.map((r) => r.id), ...locationUnits.flatMap((u) => u.occupant_character_ids || [])]);
   const vgcDistributedNpcs = characters.filter((c) => {
     if (!c.character_type) return false;
     if (!['npc', 'family_npc', 'background', 'promoted_npc'].includes(c.character_type)) return false;

@@ -27,11 +27,6 @@ import { isUnhousedResidenceUnit } from '@/lib/unhousedLivingSpace';
 import { isCharacterAtWork } from '@/lib/workScheduleUtils';
 import { isCharacterHome } from '@/lib/travelAvailability';
 
-function isAtLocation(character, location) {
-  if (!location?.id || !character?.id) return false;
-  return character.resolved_current_location_id === location.id;
-}
-
 // Presence states that mean the person is NOT in this property's shared area, whatever a
 // stale location field says: a hospital bed, a cell, house arrest, the road, off-screen.
 const AWAY_PRESENCE_STATUSES = new Set([
@@ -43,10 +38,25 @@ const AWAY_PRESENCE_STATUSES = new Set([
  * otherwise not in its shared immediate area.
  * Empty for an ordinary venue or a single-household home.
  */
-export function getPrivateSpaceOccupantIds(location, characters = []) {
+export function getPrivateSpaceOccupantIds(location, characters = [], presenceEntities = []) {
   const ids = new Set();
   if (!location?.id) return ids;
   const list = characters || [];
+
+  // WHO IS ACTUALLY HERE IS THE RESOLVED PRESENCE — the same authority Who's Here and the
+  // scene's participants already use. A record's own stored location field can lag behind
+  // the schedule that put someone on shift, so it is only the fallback when the resolver
+  // has no entity for that person at all.
+  const resolvedLocation = new Map();
+  const resolvedStatus = new Map();
+  (presenceEntities || []).forEach((entity) => {
+    if (!entity?.id) return;
+    resolvedLocation.set(entity.id, entity.resolved_current_location_id);
+    resolvedStatus.set(entity.id, entity.resolved_presence_status);
+  });
+  const locationOf = (character) => resolvedLocation.get(character.id) || character.resolved_current_location_id;
+  const statusOf = (character) => resolvedStatus.get(character.id) || character.resolved_presence_status;
+  const isHereNow = (character) => locationOf(character) === location.id;
 
   // 1. ASSIGNED SPACES — apartments, patient rooms, cells, dorm rooms, hotel rooms. The
   //    assignment Places already stores is the authority, and an ended stay is no
@@ -64,14 +74,15 @@ export function getPrivateSpaceOccupantIds(location, characters = []) {
     getActiveUnitOccupantIds(location, unit, list).forEach((id) => {
       const character = list.find((c) => c.id === id);
       if (!character) return;
-      const here = character.resolved_current_location_id === location.id
-        || (character.current_home_location_id === location.id && isCharacterHome(character));
+      const here = isHereNow(character)
+        || (!resolvedLocation.has(character.id)
+          && character.current_home_location_id === location.id && isCharacterHome(character));
       if (!here) return;
       // Staying in a tent is not being in the property's shared area — the person belongs
       // to the parent's outdoor environment and stays eligible there. A record that says
       // they are in a hospital bed, a cell or on the road is not there at all, so it is
       // still never part of that outdoor pool.
-      if (unhoused && !AWAY_PRESENCE_STATUSES.has(character.resolved_presence_status)) return;
+      if (unhoused && !AWAY_PRESENCE_STATUSES.has(statusOf(character))) return;
       ids.add(id);
     });
   });
@@ -84,9 +95,8 @@ export function getPrivateSpaceOccupantIds(location, characters = []) {
     (workplace.worker_character_ids || []).forEach((id) => {
       const character = list.find((c) => c.id === id);
       if (!character) return;
-      if (character.resolved_current_location_id && !isAtLocation(character, location)) return;
-      const atWorkHere = isCharacterAtWork(character, location)
-        || (character.resolved_presence_status === 'at_work' && isAtLocation(character, location));
+      if (!isHereNow(character)) return;
+      const atWorkHere = isCharacterAtWork(character, location) || statusOf(character) === 'at_work';
       if (!atWorkHere) return;
       ids.add(id);
     });
@@ -95,8 +105,8 @@ export function getPrivateSpaceOccupantIds(location, characters = []) {
   // 3. A hospital patient is in their patient room.
   if (location.category === 'medical') {
     list.forEach((c) => {
-      if (c.resolved_presence_status !== 'hospitalized') return;
-      if (c.resolved_current_location_id && !isAtLocation(c, location)) return;
+      if (statusOf(c) !== 'hospitalized') return;
+      if (!isHereNow(c)) return;
       ids.add(c.id);
     });
   }
@@ -105,9 +115,9 @@ export function getPrivateSpaceOccupantIds(location, characters = []) {
   if (location.category === 'jail_prison' || location.is_confinement_facility === true) {
     list.forEach((c) => {
       const confined = c.is_jailed === true
-        || ['incarcerated', 'confined'].includes(c.resolved_presence_status);
+        || ['incarcerated', 'confined'].includes(statusOf(c));
       if (!confined) return;
-      const facilityId = c.incarceration_facility_id || c.resolved_current_location_id;
+      const facilityId = c.incarceration_facility_id || locationOf(c);
       if (facilityId && facilityId !== location.id) return;
       ids.add(c.id);
     });
@@ -117,7 +127,7 @@ export function getPrivateSpaceOccupantIds(location, characters = []) {
   if (location.category === 'school') {
     const enrolledIds = new Set((location.enrolled_students || []).map((s) => s?.character_id).filter(Boolean));
     list.forEach((c) => {
-      if (!isAtLocation(c, location)) return;
+      if (!isHereNow(c)) return;
       const enrolledHere = enrolledIds.has(c.id)
         || c.education_location_id === location.id
         || (c.education_enrollments || []).some((e) => (e?.in_person_location_id || e?.location_id) === location.id)
