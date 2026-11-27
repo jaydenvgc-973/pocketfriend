@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import GatheringRoomWatchParty from "@/components/gatheringroom/GatheringRoomWatchParty";
 import GatheringRoomImageShare from "@/components/gatheringroom/GatheringRoomImageShare";
 import GatheringRoomGamesModal from "@/components/gatheringroom/GatheringRoomGamesModal";
+import { useSceneViewportHeight } from "@/hooks/useSceneViewportHeight";
 
 // Type-neutral avatar: identical presentation for all participants.
 // No branching on entity type. Falls back to a generic person icon identically.
@@ -46,6 +47,10 @@ export default function GatheringRoom() {
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   const gatheringEpochRef = useRef(null);
+  // The room is exactly one screen tall. While the on-screen keyboard is open the
+  // visible area is smaller than the window, so the message field stays above the
+  // keyboard; when it closes the normal full height returns.
+  const keyboardViewportHeight = useSceneViewportHeight();
 
   const { data: currentUser = {} } = useQuery({
     queryKey: ["user"],
@@ -357,9 +362,12 @@ export default function GatheringRoom() {
   }
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden bg-background">
+    <div
+      className="flex flex-col bg-background overflow-hidden w-full"
+      style={{ height: keyboardViewportHeight ? `${keyboardViewportHeight}px` : "100dvh" }}
+    >
       {/* Header */}
-      <div className="flex-shrink-0 bg-background/80 backdrop-blur-xl border-b border-border px-4 py-3 flex items-center gap-3">
+      <div className="flex-shrink-0 bg-background/80 backdrop-blur-xl border-b border-border px-3 sm:px-4 py-2.5 sm:py-3 flex items-center gap-2 sm:gap-3">
         <Link to="/travel" className="text-muted-foreground hover:text-foreground">
           <ArrowLeft className="w-5 h-5" />
         </Link>
@@ -388,7 +396,7 @@ export default function GatheringRoom() {
       />
 
       {/* Participant bar — normalized avatars, no type disclosure */}
-      <div className="px-4 py-3 border-b border-border">
+      <div className="flex-shrink-0 px-3 sm:px-4 py-2 sm:py-3 border-b border-border">
         <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide">
           {sortedParticipants.map((p) => (
             <div key={p.id} className="flex flex-col items-center gap-1 min-w-[56px]">
@@ -457,7 +465,9 @@ export default function GatheringRoom() {
               })}
             </div>
           )}
-          <div className="flex-1 overflow-y-auto max-w-lg mx-auto px-4 py-4 space-y-3">
+          {/* Conversation — the only scrolling region: it takes the height the header,
+              image and toolbar leave and scrolls inside itself. */}
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain w-full max-w-lg mx-auto px-3 sm:px-4 py-3 sm:py-4 space-y-3">
             {messages.map((msg) => {
               const isMine = msg.sender_participant_id === myUserParticipant?.id;
               // ── Unified avatar authority ──
@@ -544,8 +554,8 @@ export default function GatheringRoom() {
           </AnimatePresence>
 
           {/* Message input — z-50, no BottomNav covering it */}
-          <div className="flex-shrink-0 bg-background/90 backdrop-blur-xl border-t border-border px-4 py-3">
-            <div className="max-w-lg mx-auto">
+          <div className="flex-shrink-0 bg-background/90 backdrop-blur-xl border-t border-border px-2 sm:px-4 pt-2 sm:pt-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:pb-3">
+            <div className="w-full max-w-lg mx-auto">
               {directedTo.length > 0 && (
                 <div className="flex items-center gap-1 mb-2 flex-wrap">
                   {directedTo.map(id => {
@@ -560,26 +570,32 @@ export default function GatheringRoom() {
                 </div>
               )}
               {error && <p className="text-[10px] text-destructive mb-2">{error}</p>}
-              <div className="flex items-center gap-2">
+              {/* One row that always fits the screen: the four fixed controls keep their
+                  size and never shrink, and the message field takes whatever width is
+                  left (min-w-0 lets it shrink instead of pushing the send button off
+                  screen). Padding and gaps tighten on phones and return to the
+                  established sizes from the small breakpoint up. */}
+              <div className="flex items-center gap-1.5 sm:gap-2 w-full min-w-0">
                 <button onClick={() => setShowDirectPicker(true)}
-                  className={`p-2 rounded-lg transition-colors ${directedTo.length > 0 ? "text-primary bg-primary/10" : "text-muted-foreground hover:bg-secondary"}`}>
+                  className={`p-1.5 sm:p-2 rounded-lg flex-shrink-0 transition-colors ${directedTo.length > 0 ? "text-primary bg-primary/10" : "text-muted-foreground hover:bg-secondary"}`}
+                  title="Mention someone">
                   <AtSign className="w-5 h-5" />
                 </button>
                 <button onClick={() => setShowWatchPartyInput(true)}
-                  className="p-2 rounded-lg text-muted-foreground hover:bg-secondary transition-colors" title="Start watch party">
+                  className="p-1.5 sm:p-2 rounded-lg flex-shrink-0 text-muted-foreground hover:bg-secondary transition-colors" title="Start watch party">
                   <Video className="w-5 h-5" />
                 </button>
                 <button onClick={() => setShowGamesModal(true)}
-                  className="p-2 rounded-lg text-muted-foreground hover:bg-secondary transition-colors" title="Play games">
+                  className="p-1.5 sm:p-2 rounded-lg flex-shrink-0 text-muted-foreground hover:bg-secondary transition-colors" title="Play games">
                   <Gamepad2 className="w-5 h-5" />
                 </button>
                 <input ref={inputRef} type="text" value={messageText}
                   onChange={(e) => setMessageText(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSend()}
                   placeholder={directedTo.length > 0 ? "Direct message…" : "Say something to the room…"}
-                  className="flex-1 px-4 py-2.5 rounded-xl bg-secondary border border-border focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground text-sm" />
+                  className="flex-1 min-w-0 w-full px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl bg-secondary border border-border focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground text-sm" />
                 <button onClick={handleSend} disabled={!messageText.trim() || isSending}
-                  className="p-2.5 rounded-xl bg-primary text-primary-foreground disabled:opacity-40 hover:bg-primary/90 transition-colors">
+                  className="p-2 sm:p-2.5 rounded-xl flex-shrink-0 bg-primary text-primary-foreground disabled:opacity-40 hover:bg-primary/90 transition-colors">
                   <Send className="w-5 h-5" />
                 </button>
               </div>

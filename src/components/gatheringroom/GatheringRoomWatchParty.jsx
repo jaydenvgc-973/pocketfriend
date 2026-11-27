@@ -91,8 +91,11 @@ export default function GatheringRoomWatchParty({
 
   return (
     <>
-      {/* ── Scene / Player area — flex-shrink-0 so conversation gets remaining space ── */}
-      <div className="flex-shrink-0">
+      {/* ── Scene / Player area ──────────────────────────────────────────────────────
+          The image keeps its established full-width, centred presentation, but it is now
+          allowed to give height back on a short screen (landscape phone, open keyboard)
+          so the header and the message toolbar always stay on screen. ── */}
+      <div className={showCollapsedBar ? "flex-shrink-0" : "flex-shrink min-h-[80px] h-44 sm:h-56"}>
         {showCollapsedBar && (
           <div className="h-9 flex items-center justify-between px-4 bg-secondary border-b border-border">
             <span className="text-[11px] text-muted-foreground truncate">
@@ -108,7 +111,7 @@ export default function GatheringRoomWatchParty({
         )}
 
         {(showSceneImage || showVideoPlayer || showInputPanel) && (
-          <div className="relative w-full h-44 sm:h-56 overflow-hidden bg-black">
+          <div className="relative w-full h-full overflow-hidden bg-black">
             {/* Input panel — same form fields and sanitizer as WatchVideoPanel */}
             {showInputPanel && (
               <div className="absolute inset-0 z-20 bg-black flex flex-col">
