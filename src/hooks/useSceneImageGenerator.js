@@ -41,7 +41,7 @@ import { resolveSceneZone } from "@/lib/sceneSpaceZone";
  *   - avatar_url / image_avatar_url is the PRIMARY visual identity image — always
  *     included when present. The avatar is the main established image of the person;
  *     it is NOT a fallback and is NOT displaced by additional references.
- *   - reference_image_urls SUPPLEMENT the avatar (up to 2) — additional angles / detail
+ *   - original reference photos are NEVER passed — they exist to create the avatar
  *     that strengthen identity coverage alongside the avatar.
  *   - The sealed subject bundle adds FACE-ONLY EXTRACTION instructions so the model
  *     uses the avatar for identity while ignoring its background/pose/clothing/props.
@@ -204,7 +204,7 @@ export function useSceneImageGenerator({ transcript = [], getActiveSpace = null 
 
     // ── REFERENCE KEY — avatar primary, reference images supplement ──
     // The avatar is the primary visual identity image (always included when present).
-    // Additional reference_image_urls supplement it (up to 2) with more angles/detail.
+    // Original reference photos are never added — the avatar is the only identity image.
     // The sealed subject bundle adds face-only extraction instructions so the avatar
     // is used for identity while its background/pose/clothing/props are ignored.
     const refKey = buildSceneParticipantReferenceKey(finalParticipants, envRefs, { maxPerPerson: maxRefsPerPerson });

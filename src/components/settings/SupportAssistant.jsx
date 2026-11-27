@@ -1407,18 +1407,16 @@ Failure modes:
 Primary path: Chat → generateImageAsync (backend)
 Secondary path: MediaGallery → mediaGridGenerate (backend)
 Scene path: Scene page → sceneImageGenerator (frontend) + GenerateImage integration
-Identity resolution order (generateImageAsync): reference_image_urls (max 2, no generated_image files, NO avatar_url) → charDesc text (appearance_lock + avatar_description_text)
-Critical rule: avatar_url must NEVER be passed as a reference image — it contains background/pose/lighting that causes scene contamination
-Critical bug (MediaGallery): currently passes avatar_url as FIRST reference image — violates the contract
+Identity resolution order (generateImageAsync): the current profile avatar (the ONLY visual identity reference) → charDesc text (appearance_lock + avatar_description_text)
+Critical rule: original avatar reference photos are NEVER passed as reference images — they exist solely to create the avatar
 Environment resolution: character.resolved_current_location_id → LocationReference → zones → zone images (matched by keyword, then zone name, then single-zone fallback)
 Zone isolation: STRICT — only matched zone's images used; no cross-zone bleed
 Outfit resolution: character_closet → resolveCharacterOutfitForPrompt → occasion-category matching → daily rotation fallback → current_outfit field fallback
 Sanitizer: classifySceneContext (safe vs explicit) → minimal-rewrite for safe scenes; full rewrite for explicit only
 Camera validation: 3-attempt loop; each attempt extracts camera variables; rejected if < 2 variables differ from previous accepted image
 Identity loss modes:
-  - No reference_image_urls on character → generates from charDesc text only (weaker identity)
+  - No avatar on character → generates from charDesc text only (weaker identity)
   - Multi-person: secondary characters collapse because charDesc text not injected per slot (known gap)
-  - avatar_url passed first → background/pose from avatar bleeds into generated scene
   - Third-party photo incorrectly resolves sender as subject → sender's face appears in wrong-person photo
 
 ── IMAGE VISIBILITY PIPELINE (character receiving images) ────

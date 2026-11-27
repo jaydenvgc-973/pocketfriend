@@ -199,14 +199,15 @@ export default function Scene() {
   const userParticipant = useMemo(() => {
     // Observing means absent: no user participant, no user in prompts or images.
     if (observeMode) return null;
-    const userAvatar = currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || currentUser?.avatar_url || null;
+    // AVATAR AUTHORITY: only the current avatar — original reference photos are never inputs.
+    const userAvatar = currentUser?.generated_avatar_urls?.[0] || currentUser?.avatar_url || null;
     if (!userAvatar) return null;
     return {
       id: currentUser?.id || 'user', name: displayName, avatar_url: userAvatar, image_avatar_url: userAvatar,
-      reference_image_urls: currentUser?.reference_image_urls || [], appearance_lock: settings?.appearance_lock || null,
+      reference_image_urls: [], appearance_lock: settings?.appearance_lock || null,
       user_race: settings?.user_race || null, gender: settings?.user_gender || currentUser?.gender || null, isUser: true,
     };
-  }, [observeMode, currentUser?.id, currentUser?.generated_avatar_urls, currentUser?.reference_image_urls, currentUser?.avatar_url, displayName, settings?.appearance_lock, settings?.user_gender, currentUser?.gender]);
+  }, [observeMode, currentUser?.id, currentUser?.generated_avatar_urls, currentUser?.avatar_url, displayName, settings?.appearance_lock, settings?.user_gender, currentUser?.gender]);
 
   const { data: locationsData = [], isFetching: isLocationsFetching } = useQuery({
     queryKey: ["locationReferences", currentUser?.email],
@@ -626,7 +627,7 @@ export default function Scene() {
       if (isUserPresenceEntity(entity, currentUser?.id)) continue;
       seenIds.add(entity.id);
       const char = characters.find((c) => c.id === entity.id); const full = char || {};
-      participants.push({ ...full, id: entity.id, name: full.name || entity.display_name, display_name: entity.display_name, avatar_url: full.avatar_url || entity.avatar_url, image_avatar_url: full.image_avatar_url, reference_image_urls: full.reference_image_urls || [], appearance_lock: full.appearance_lock, ethnicities: full.ethnicities, gender: full.gender, personality_summary: full.personality_summary || entity.personality_summary, emotional_state: full.emotional_state || entity.emotional_state, archetype: full.archetype, age: full.age, age_range: full.age_range, resolved_presence_status: entity.resolved_presence_status, is_home_resident: entity.is_home_resident, isNpc: false, sceneRole: resolveSceneRole({ id: entity.id, resolved_presence_status: entity.resolved_presence_status }, { onShiftAtLocationIds: onShiftIds, homeResidentIds }) });
+      participants.push({ ...full, id: entity.id, name: full.name || entity.display_name, display_name: entity.display_name, avatar_url: full.avatar_url || entity.avatar_url, image_avatar_url: full.image_avatar_url, reference_image_urls: [], appearance_lock: full.appearance_lock, ethnicities: full.ethnicities, gender: full.gender, personality_summary: full.personality_summary || entity.personality_summary, emotional_state: full.emotional_state || entity.emotional_state, archetype: full.archetype, age: full.age, age_range: full.age_range, resolved_presence_status: entity.resolved_presence_status, is_home_resident: entity.is_home_resident, isNpc: false, sceneRole: resolveSceneRole({ id: entity.id, resolved_presence_status: entity.resolved_presence_status }, { onShiftAtLocationIds: onShiftIds, homeResidentIds }) });
     }
     if (isResidentialSpace) { for (const fn of familyNpcSceneObjects) { if (!fn || !fn.id || seenIds.has(fn.id)) continue; seenIds.add(fn.id); participants.push({ ...fn, sceneRole: 'home resident', isNpc: true }); } }
     for (const n of npcsTravelingHere) { if (!n || !n.id || seenIds.has(n.id)) continue; seenIds.add(n.id); participants.push({ ...n, sceneRole: 'visitor', isNpc: true }); }
@@ -680,10 +681,10 @@ export default function Scene() {
 
   // ── IMAGE GENERATION HOOK ──
   // Identity authority chain:
-  //   participant ID → avatar (primary) + additional reference images (supplements)
+  //   participant ID → avatar (the ONLY visual identity image)
   //   + Appearance Lock reinforcement → participant binding → Closet → composition
   // The avatar is the main established image — always included, NOT a fallback.
-  // reference_image_urls supplement the avatar with more angles/detail.
+  // Original reference photos are never passed; they exist only to create the avatar.
   // The scene's own transcript goes to the picture: what its people have already said, and
   // what has been narrated, is the record of their current physical state — so an image can
   // never contradict an action the scene has already established.
@@ -2422,7 +2423,7 @@ export default function Scene() {
           setPendingClosetEntry(null);
         }}
       />
-      <ChangeClothesModal isOpen={showChangeClothesModal} onClose={() => setShowChangeClothesModal(false)} settings={settings} isUserSettingsLoading={isUserSettingsLoading} presentCharacters={changeClothesEligibleCharacters} location={location} currentUser={currentUser} userAvatar={currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || currentUser?.avatar_url || null} userName={displayName} onOutfitChanged={(targetType) => { if (targetType === 'user') queryClient.invalidateQueries({ queryKey: ['userSettings', currentUser?.email] }); else queryClient.invalidateQueries({ queryKey: ['activeCharacters', currentUser?.email] }); setOutfitVersion((v) => v + 1); setHasUserRequestedImage(true); setSceneImage(null); }} />
+      <ChangeClothesModal isOpen={showChangeClothesModal} onClose={() => setShowChangeClothesModal(false)} settings={settings} isUserSettingsLoading={isUserSettingsLoading} presentCharacters={changeClothesEligibleCharacters} location={location} currentUser={currentUser} userAvatar={currentUser?.generated_avatar_urls?.[0] || currentUser?.avatar_url || null} userName={displayName} onOutfitChanged={(targetType) => { if (targetType === 'user') queryClient.invalidateQueries({ queryKey: ['userSettings', currentUser?.email] }); else queryClient.invalidateQueries({ queryKey: ['activeCharacters', currentUser?.email] }); setOutfitVersion((v) => v + 1); setHasUserRequestedImage(true); setSceneImage(null); }} />
       {governmentVenueType && (
         <GovernmentVenueSetupModal
           open={showVenueSetup}

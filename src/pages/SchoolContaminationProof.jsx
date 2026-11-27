@@ -111,9 +111,11 @@ export default function SchoolContaminationProof() {
       addLog(`  resolved_current_location_id (polluted input): ${resolvedLocId}`, "data");
       addLog(`  home_id (expected output): ${HOME_ID}`, "data");
 
-      const refImages = (char.reference_image_urls || [])
-        .filter(u => u && u.startsWith("https://media.base44.com/") && !u.includes("generated_image"))
-        .slice(0, 3);
+      // AVATAR AUTHORITY: the current avatar is the only identity reference —
+      // original avatar reference photos are never image-generation inputs.
+      const refImages = [char.avatar_url, char.image_avatar_url]
+        .filter(u => u && u.startsWith("https://media.base44.com/"))
+        .slice(0, 1);
       addLog(`  reference images: ${refImages.length}`, "data");
 
       const user = await base44.auth.me();

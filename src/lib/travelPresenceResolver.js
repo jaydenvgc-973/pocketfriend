@@ -75,7 +75,7 @@ export function resolveTravelPresenceEntities({
 
     if (isUserPresent) {
       const displayName = userSettings.fictional_world_name || currentUser.full_name || 'You';
-      const avatarUrl = currentUser.generated_avatar_urls?.[0] || currentUser.reference_image_urls?.[0] || null;
+      const avatarUrl = currentUser.generated_avatar_urls?.[0] || currentUser.avatar_url || null;
       normalized.push({
         id: `user_${currentUser.id}`,
         display_name: displayName,

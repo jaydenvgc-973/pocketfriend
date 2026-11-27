@@ -224,7 +224,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
 
         console.log(
           `[MediaGallery] User entry built | world_name="${userWorldName}"` +
-          ` | avatar_source=${userEntity?.reference_image_urls?.[0] ? 'user_entity_ref' : userEntity?.generated_avatar_urls?.[0] ? 'user_entity_gen_avatar' : userEntity?.avatar_url ? 'user_entity_avatar' : 'settings_fallback'}` +
+          ` | avatar_source=${userEntity?.generated_avatar_urls?.[0] ? 'user_entity_gen_avatar' : userEntity?.avatar_url ? 'user_entity_avatar' : 'settings_fallback'}` +
           ` | ref_count=${userRefImageUrls.length}`
         );
 

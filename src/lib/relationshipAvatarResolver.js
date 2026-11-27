@@ -30,14 +30,12 @@ export function resolveRelationshipAvatar(rel, allCharacters = []) {
 }
 
 /**
- * Reference images for identity-locked generation: the established avatar first,
- * then the character's own reference images. Never invent a new identity source.
+ * Reference images for identity-locked generation: the established avatar ONLY.
+ * Original avatar reference photos are never generation inputs — they exist to
+ * create the avatar, and never substitute for it.
  */
 export function getRelationshipIdentityReferences(character) {
   if (!character) return [];
-  const refs = [
-    character.avatar_url || character.image_avatar_url || null,
-    ...(character.reference_image_urls || []),
-  ].filter(Boolean);
-  return [...new Set(refs)].slice(0, 3);
+  const avatar = character.avatar_url || character.image_avatar_url || null;
+  return avatar ? [avatar] : [];
 }

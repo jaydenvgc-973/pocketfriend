@@ -171,9 +171,12 @@ Rules:
       if (imageMatch) {
         const imagePrompt = imageMatch[1];
         finalText = cleanText.replace(imageMatch[0], '').trim();
-        const refImages = character.reference_image_urls?.length
-          ? character.reference_image_urls
-          : character.avatar_url ? [character.avatar_url] : null;
+        // AVATAR AUTHORITY: the current profile avatar is the ONLY identity reference.
+        // Original avatar reference photos are never image-generation inputs — they
+        // exist solely to create the avatar.
+        const refImages = (character.avatar_url || character.image_avatar_url)
+          ? [character.avatar_url || character.image_avatar_url]
+          : null;
 
         if (refImages) {
           const appearanceNote = character.appearance_notes

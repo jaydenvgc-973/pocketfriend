@@ -112,17 +112,16 @@ export async function fetchUnifiedRoster(base44, userEmail) {
 
   // ── USER ENTRY ───────────────────────────────────────────────────────────
   const userWorldName = settings?.fictional_world_name || user?.full_name || 'You';
+  // AVATAR AUTHORITY: the user's current avatar is the only identity reference.
+  // Original avatar reference photos are never roster or generation inputs.
   const userDisplayAvatar =
     user?.generated_avatar_urls?.[0] ||
     settings?.generated_avatar_urls?.[0] ||
-    user?.reference_image_urls?.[0] ||
-    settings?.reference_image_urls?.[0] ||
+    user?.avatar_url ||
     null;
   const userReferenceImages = [
     ...(user?.generated_avatar_urls || []),
     ...(settings?.generated_avatar_urls || []),
-    ...(user?.reference_image_urls || []),
-    ...(settings?.reference_image_urls || []),
   ].filter((v, i, a) => v && a.indexOf(v) === i);
 
   const userEntry = user ? {

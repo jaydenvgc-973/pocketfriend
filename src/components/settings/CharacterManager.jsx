@@ -578,7 +578,6 @@ export default function CharacterManager() {
                   {isUser ? (() => {
                    const userAvatar = itemData.avatar_url
                      || userSettings?.generated_avatar_urls?.[0]
-                     || userSettings?.reference_image_urls?.[0]
                      || null;
                    return userAvatar ? (
                      <img src={userAvatar} alt={itemName} className="w-12 h-12 rounded-lg object-cover flex-shrink-0" />

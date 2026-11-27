@@ -94,7 +94,7 @@ export default function StoryEventViewer({ eventId }) {
           setCharacters(allChars);
           const userSettings = settingsList?.[0] || null;
           // Avatar + world name live on the USER entity, not UserSettings
-          const userAvatarUrl = user?.generated_avatar_urls?.[0] || user?.reference_image_urls?.[0] || null;
+          const userAvatarUrl = user?.generated_avatar_urls?.[0] || user?.avatar_url || null;
           const userDisplayName = user?.world_name || userSettings?.fictional_world_name || user?.full_name || 'You';
           // Build identity roster: User first, then all characters
           const roster = [];
@@ -1235,8 +1235,7 @@ export default function StoryEventViewer({ eventId }) {
                           npc_fictitious: 'NPC',
                           npc_world_service: 'Service',
                         }[char.character_type] || 'Other';
-                    const avatarUrl = char.avatar_url || char.image_avatar_url || 
-                      (Array.isArray(char.reference_image_urls) ? char.reference_image_urls[0] : null);
+                    const avatarUrl = char.avatar_url || char.image_avatar_url || null;
 
                     return (
                       <button key={char.id} onClick={() => toggleRegenIdentity(char.id)}

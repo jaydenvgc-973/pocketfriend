@@ -593,7 +593,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     physical_setting: editingLocation?.physical_setting || "",
   });
   const worldName = userSettings?.fictional_world_name || currentUser?.full_name || "You";
-  const userAvatarUrl = currentUser?.selected_avatar_url || currentUser?.user_avatar_url || currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || null;
+  const userAvatarUrl = currentUser?.selected_avatar_url || currentUser?.user_avatar_url || currentUser?.generated_avatar_urls?.[0] || currentUser?.avatar_url || null;
   // Administrator-set capacity for the shared residence (Gateway House only)
   const { data: sharedResidencyConfig = null } = useQuery({
     queryKey: ['sharedResidency', editingLocation?.id],

@@ -674,10 +674,11 @@ Deno.serve(async (req) => {
           //   - avatar + generated avatars (body type, skin color, facial features, shape, hairstyle)
           //   - appearance_lock (height, skin tone, hair type, hairstyle, facial hair, clothing, aesthetic)
           //   - gender, culture, race, ethnicity (demographic identity anchors)
-          const userEntityRefs = cdnFilter(userEntityRecord?.reference_image_urls || []);
+          // AVATAR AUTHORITY: the user's current avatar is the ONLY identity reference.
+          // Original avatar reference photos are never image-generation inputs.
           const userEntityAvatars = cdnFilter(userEntityRecord?.generated_avatar_urls || []);
           const settingsAvatar = cdnFilter([settingsRecord?.avatar_url, settingsRecord?.image_avatar_url].filter(Boolean));
-          const userRefImages = [...userEntityRefs.slice(0, 3), ...userEntityAvatars.slice(0, 2), ...settingsAvatar.slice(0, 2)].filter(Boolean);
+          const userRefImages = [...userEntityAvatars, ...settingsAvatar].filter(Boolean).slice(0, 1);
 
           const worldName = userEntityRecord?.world_name || settingsRecord?.fictional_world_name || null;
           const platformUserId = userEntityRecord?.id || ownerEmail; // user.id from User entity — NOT email

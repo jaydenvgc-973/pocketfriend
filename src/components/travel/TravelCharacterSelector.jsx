@@ -51,7 +51,7 @@ function buildCanonicalFamilyKey(char) {
 }
 
 export default function TravelCharacterSelector({ characters, currentUser, displayName, selectedIds, locationMap, onToggle, presenceEntities = [], userSelected = true, onToggleUser }) {
-  const avatarUrl = currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || null;
+  const avatarUrl = currentUser?.generated_avatar_urls?.[0] || currentUser?.avatar_url || null;
 
   // ── CANONICAL DEDUPLICATION ─────────────────────────────────────────────────
   // Two-pass dedup:

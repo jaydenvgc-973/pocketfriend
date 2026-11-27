@@ -98,7 +98,7 @@ export function buildSceneNameReferenceKey(participants) {
  *
  * The avatar is the main established image of the user or character — the PRIMARY
  * visual identity source. It is NOT a fallback and is NOT optional. Additional
- * reference_image_urls supplement the avatar by providing more visual evidence,
+ * original reference photos are never passed (they exist only to create the avatar),
  * angles, hair detail, facial structure, or body type. They strengthen identity
  * coverage; they do NOT replace or displace the avatar.
  *
@@ -110,8 +110,8 @@ export function buildSceneNameReferenceKey(participants) {
  * REFERENCE ORDER:
  *   1. avatar_url / image_avatar_url — PRIMARY identity image (always included
  *      when present). The avatar is the main established image of this person.
- *   2. reference_image_urls — SUPPLEMENTS (up to 2) — additional angles / detail
- *      that strengthen identity coverage alongside the avatar.
+ *   2. Original reference photos — NEVER passed. They exist only to create the
+ *      avatar and are not identity references for scene generation.
  *
  * The sealed subject bundle adds FACE-ONLY EXTRACTION instructions for the avatar
  * so the model uses it for identity (face structure, skin tone, hair, body type)

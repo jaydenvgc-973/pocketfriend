@@ -238,11 +238,8 @@ Deno.serve(async (req) => {
                   if (url && typeof url === 'string') userRefImages.push(url);
                 });
               }
-              if (Array.isArray(matched.reference_image_urls)) {
-                matched.reference_image_urls.forEach(url => {
-                  if (url && typeof url === 'string') userRefImages.push(url);
-                });
-              }
+              // AVATAR AUTHORITY: original avatar reference photos are never collected
+              // for image generation — only the user's generated avatar is an input.
 
               // UserSettings only for appearance_lock (User entity does not have it)
               let userAppearanceLock = null;
@@ -274,8 +271,8 @@ Deno.serve(async (req) => {
           // known identity. Finding the user record IS the resolution — the
           // user is resolved as soon as they are matched, regardless of whether
           // uploaded reference photos exist. The appearance_lock + name are
-          // sufficient for identity generation. Reference images (when present)
-          // are still collected above for grounding.
+          // sufficient for identity generation. Only the generated avatar is
+          // collected above as a visual reference.
           if (userRefImages.length > 0) {
             refImages.push(...userRefImages);
           }

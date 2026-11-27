@@ -77,7 +77,7 @@ export default function MyProfile() {
   });
 
   const displayName = settings.fictional_world_name || user?.full_name || "You";
-  const avatarUrl = user?.generated_avatar_urls?.[0] || user?.reference_image_urls?.[0] || null;
+  const avatarUrl = user?.generated_avatar_urls?.[0] || user?.avatar_url || null;
   const balance = settings.user_balance ?? 6000;
   const vgcRevenue = settings.vgc_mobile_revenue ?? 0;
   const userGender = settings.user_gender || "other";
@@ -158,7 +158,7 @@ export default function MyProfile() {
           const m = today.getMonth() - birth.getMonth();
           if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) userAge--;
         }
-        const userAvatarUrl = user?.generated_avatar_urls?.[0] || user?.reference_image_urls?.[0] || null;
+        const userAvatarUrl = user?.generated_avatar_urls?.[0] || user?.avatar_url || null;
         updatedFamily = [
           ...updatedFamily,
           {

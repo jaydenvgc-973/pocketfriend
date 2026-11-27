@@ -40,7 +40,7 @@ export default function ScenePhotoModal({ location, characters, allPossibleNpcs,
   // Recipients use the same alphabetical order and account labels everywhere.
   const ownShareCharacters = buildOwnShareCharacters((allCharacters || []).filter(c => !c.isNpc), currentUser?.email);
   const senderOptions = [
-    { id: "user", name: displayName, avatar_url: excludeUser ? null : (currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || null) },
+    { id: "user", name: displayName, avatar_url: excludeUser ? null : (currentUser?.generated_avatar_urls?.[0] || currentUser?.avatar_url || null) },
     ...ownShareCharacters,
   ];
 
@@ -99,7 +99,8 @@ export default function ScenePhotoModal({ location, characters, allPossibleNpcs,
     const autoPrompt = prompt.trim() || `Candid group photo at ${location.name}, natural lighting, realistic moment`;
 
     // STRICT IDENTITY LOCK: Extract user + character avatars as hard references
-    const userAvatar = includeUser ? (currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || null) : null;
+    // AVATAR AUTHORITY: only the current avatar anchors the user — never a reference photo.
+    const userAvatar = includeUser ? (currentUser?.generated_avatar_urls?.[0] || currentUser?.avatar_url || null) : null;
     const avatarUrls = extractPhotoAvatarUrls(selectedChars, userAvatar);
     
     // Validate generation input

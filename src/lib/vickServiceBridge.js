@@ -602,9 +602,9 @@ MEMORY & CONTEXT:
 - Life Journal: CharacterMemory with importance_score >= 4
 
 IMAGE GENERATION:
-- Identity: reference_image_urls (max 2, NO avatar_url ever — causes contamination)
+- Identity: the current profile avatar ONLY — the sole visual identity reference
 - Environment: Character.resolved_current_location_id → LocationReference → zones → zone images
-- avatar_url must NEVER be passed as a reference image
+- Original avatar reference photos must NEVER be passed as reference images (avatar creation only)
 - Outfit: character_closet → resolveCharacterOutfitForPrompt → occasion-category matching
 
 FINANCIAL:

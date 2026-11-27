@@ -468,7 +468,7 @@ export default function GatheringRoom() {
               // self-messages. This prevents a generic icon from revealing which
               // senders are users vs characters.
               const senderInParticipants = participants.find(p => p.id === msg.sender_participant_id);
-              const myAvatar = currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || null;
+              const myAvatar = currentUser?.generated_avatar_urls?.[0] || currentUser?.avatar_url || null;
               const resolvedAvatarUrl = msg.sender_avatar_url || senderInParticipants?.avatar_url || (isMine ? myAvatar : null);
               // ── Game event messages render as centered cards, not chat bubbles ──
               // These are game activity/result events, not user-authored speech.

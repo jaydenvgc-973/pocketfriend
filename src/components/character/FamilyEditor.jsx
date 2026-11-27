@@ -712,7 +712,7 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
     const userAvatar = currentUser?.selected_avatar_url
       || currentUser?.user_avatar_url
       || currentUser?.generated_avatar_urls?.[0]
-      || currentUser?.reference_image_urls?.[0]
+      || currentUser?.avatar_url
       || null;
     const worldName = userSettings?.fictional_world_name || currentUser?.full_name || "Me";
     // CANONICAL USER_ID SOURCE:
@@ -959,7 +959,7 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
                   // User Profile + UserSettings, NOT from the cached member.photo_url field.
                   // member.photo_url is a stale display cache only — it must NEVER be the authority.
                   const liveAvatar = currentUser?.generated_avatar_urls?.[0]
-                    || currentUser?.reference_image_urls?.[0]
+                    || currentUser?.avatar_url
                     || null;
                   // Live identity always wins over cached proxy data
                   const displayUrl = liveAvatar || member.photo_url;

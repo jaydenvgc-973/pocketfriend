@@ -52,8 +52,9 @@ ${charName} must be instantly recognizable as the same person.${appearanceLockBl
  * Ensures each character maintains distinct, consistent identity
  */
 export function buildMultiCharacterIdentityLocks(characters = []) {
-  // CRITICAL FIX: Do NOT exclude characters only because avatar_url is missing.
-  // Characters with reference_image_urls OR appearance_lock data are still valid identity sources.
+  // Do NOT exclude characters only because avatar_url is missing: appearance_lock,
+  // appearance_notes and avatar_description_text are text identity sources.
+  // Original reference photos never qualify — they are never generation inputs.
   //
   // GENDER PROPAGATION BOUNDARY:
   //   user with stored gender       → propagate user-profile gender. No guessing.
@@ -68,7 +69,6 @@ export function buildMultiCharacterIdentityLocks(characters = []) {
     c && c.id && (
       c.avatar_url ||
       c.image_avatar_url ||
-      (c.reference_image_urls && c.reference_image_urls.length > 0) ||
       c.appearance_lock ||
       c.appearance_notes ||
       c.avatar_description_text
@@ -224,14 +224,14 @@ export function validateIdentityLockCompliance(prompt = '') {
  * Returns list of characters that can be identity-locked
  */
 export function getIdentityLockableCharacters(characters = []) {
-  // CRITICAL FIX: Do NOT gate on avatar_url alone.
-  // A character is identity-lockable if they have ANY visual reference (avatar, reference_image_urls)
-  // OR any appearance_lock/text description to anchor identity in the prompt.
+  // Do NOT gate on avatar_url alone.
+  // A character is identity-lockable if they have an avatar, or an appearance_lock /
+  // text description to anchor identity in the prompt. Original reference photos
+  // never qualify — they are never generation inputs.
   return characters.filter(c =>
     c && c.id && (
       c.avatar_url ||
       c.image_avatar_url ||
-      (c.reference_image_urls && c.reference_image_urls.length > 0) ||
       c.appearance_lock ||
       c.appearance_notes ||
       c.avatar_description_text

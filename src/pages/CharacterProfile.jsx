@@ -1216,8 +1216,8 @@ export default function CharacterProfile() {
                 // Live user avatar — canonical source is User Profile + UserSettings, NOT the cached entry.
                 // rel.avatar_url / rel.photo_url on user-participant entries are display caches only.
                 const liveUserAvatarUrl =
-                  currentUser?.reference_image_urls?.[0]
-                  || currentUser?.generated_avatar_urls?.[0]
+                  currentUser?.generated_avatar_urls?.[0]
+                  || currentUser?.avatar_url
                   || null;
                 const ownFamilyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
                 const worldRels = (character.fictional_relationships || []).filter(r => {

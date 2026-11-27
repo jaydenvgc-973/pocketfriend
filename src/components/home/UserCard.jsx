@@ -7,7 +7,7 @@ import { useUserPresence } from "@/hooks/useUserPresence";
 export default function UserCard({ user, settings, settingsId, settingsLoading = false, settingsError = false, locations = [], isLocationsLoading = false, isLocationsError = false }) {
   // Only use fictional_world_name if settings actually loaded — never fall back to full_name as if it were the world name
   const displayName = settings?.fictional_world_name || user?.full_name || "You";
-  const avatarUrl = user?.generated_avatar_urls?.[0] || user?.reference_image_urls?.[0] || null;
+  const avatarUrl = user?.generated_avatar_urls?.[0] || user?.avatar_url || null;
   // Never show a fake balance. Only show the value when settings are confirmed loaded
   // (i.e. the record has an id — not just the {} empty shell returned during loading).
   // user_balance can legitimately be 0, so check for !== undefined not truthiness.

@@ -39,21 +39,21 @@ export async function fetchCharacterListForPicker(base44, userEmail) {
     .sort((a, b) => new Date(b.created_date) - new Date(a.created_date));
   
   // Include user as special entity at the start
-  // Priority: user.avatar_url → generated avatar → reference image → fallback
+  // AVATAR AUTHORITY: generated avatar → profile avatar. Reference photos are never used.
   let userAvatarUrl = null;
-  if (user?.avatar_url) {
-    userAvatarUrl = user.avatar_url;
+  if (user?.generated_avatar_urls?.[0]) {
+    userAvatarUrl = user.generated_avatar_urls[0];
   } else if (settings?.generated_avatar_urls?.[0]) {
     userAvatarUrl = settings.generated_avatar_urls[0];
-  } else if (user?.reference_image_urls?.[0]) {
-    userAvatarUrl = user.reference_image_urls[0];
+  } else if (user?.avatar_url) {
+    userAvatarUrl = user.avatar_url;
   }
 
   const userEntity = user ? {
     id: 'user',
     name: user.full_name || 'You',
     avatar_url: userAvatarUrl,
-    reference_image_urls: user.reference_image_urls || [],
+    reference_image_urls: [],
     generated_avatar_urls: user.generated_avatar_urls || [],
     appearance_notes: user.appearance_notes || '',
     age_range: user.age_range || '',

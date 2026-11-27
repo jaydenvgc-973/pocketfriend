@@ -113,16 +113,16 @@ export function resolveAuthenticatedUser(user, userSettings) {
   const gender = user.gender || sett.user_gender || null;
 
   // ── VISUAL IDENTITY ───────────────────────────────────────────────────────
-  // Reference images come from User entity. Appearance lock comes from UserSettings.
-  // Priority: uploaded reference photos > generated avatars (strongest → weakest identity lock).
+  // AVATAR AUTHORITY: the user's current avatar is the ONLY visual identity reference.
+  // Original avatar reference photos are never image-generation inputs — they exist
+  // solely to create the avatar, and are never a fallback for it.
   const referenceImageUrls = (user.reference_image_urls || []).filter(Boolean);
   const generatedAvatarUrls = (user.generated_avatar_urls || []).filter(Boolean);
 
-  // Ordered image refs for visual generation — highest identity fidelity first
   const visualReferenceImages = [
-    ...referenceImageUrls.slice(0, 3),
-    ...generatedAvatarUrls.slice(0, 2),
-  ].filter(Boolean);
+    ...generatedAvatarUrls.slice(0, 1),
+    ...(user.avatar_url ? [user.avatar_url] : []),
+  ].filter((v, i, a) => v && a.indexOf(v) === i).slice(0, 1);
 
   const appearanceLock = sett.appearance_lock || {};
 
