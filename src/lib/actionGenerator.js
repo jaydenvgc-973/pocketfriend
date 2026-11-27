@@ -255,7 +255,9 @@ const HOME_ACTIONS = classifyAll([
   { id: "home_clean_up", label: "Clean Up", emoji: "🧹", cost: 0, type: "functional", requires_actor: true },
   { id: "home_dishes", label: "Wash Dishes", emoji: "🍽️", cost: 0, type: "functional", zone_hints: ["kitchen", "sink", "scullery"], requires_actor: true },
   { id: "home_brush_teeth", label: "Brush Teeth", emoji: "🪥", cost: 0, type: "functional", zone_hints: ["bathroom", "bath", "powder room"], requires_actor: true },
-  { id: "home_shower", label: "Shower", emoji: "🚿", cost: 0, type: "functional", zone_hints: ["bathroom", "bath", "shower room", "en suite", "ensuite"], requires_actor: true },
+  // Hints are most specific first: a shower is taken in a shower when one exists (a stall, a
+  // portable unit), and in the bathroom only when the space has no separate shower.
+  { id: "home_shower", label: "Shower", emoji: "🚿", cost: 0, type: "functional", zone_hints: ["shower room", "shower", "en suite", "ensuite", "bathroom", "bath"], requires_actor: true },
   { id: "home_make_bed", label: "Make Bed", emoji: "🛏️", cost: 0, type: "functional", zone_hints: ["bedroom", "bed room"], requires_actor: true },
   // Moonwink — the strip's title only. The label is never spoken, written, or remembered
   // by a character; the interaction is played out in ordinary language. Adults only.

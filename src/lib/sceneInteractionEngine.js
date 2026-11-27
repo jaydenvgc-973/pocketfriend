@@ -11,6 +11,8 @@
 
 import { generateLocationActions } from './actionGenerator.js';
 import { REQUIRED_STAFF_ROLES, VGC_YARD_REQUIRED_STAFF } from './sceneVenueNPCs.js';
+import { resolveActivityZone } from './sceneActivityZoneResolver.js';
+import { getActiveSceneSpaceId } from './activeSceneSpace.js';
 
 /**
  * Get scene interactions for a location.
@@ -78,8 +80,24 @@ export function getSceneInteractions(location, activeZone, character, options = 
       scene_instance_id: `${action.id}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     };
 
-    // Zone hint: if the action declares a preferred zone and it exists on the location, attach it
-    if (action.suggested_zone && realZones.includes(action.suggested_zone)) {
+    // Zone target. When the scene is inside a specific space — an apartment, a room, a
+    // workplace, a configured environment — that space decides where the activity happens:
+    // its own assigned room first, then an accessible shared facility of the property, and
+    // otherwise the space the characters are already in. This is what keeps a residence's
+    // own kitchen (however it is titled) instead of the first "Kitchen" on the property.
+    // A scene at property level, or a space with no assigned zones, keeps the established
+    // property-wide resolution below, unchanged.
+    const scopedZone = resolveActivityZone(location, {
+      // The space the scene is actually inside: the one the page published for this render
+      // (an apartment, a room, a workplace), or one the caller names explicitly.
+      spaceId: options.spaceId || getActiveSceneSpaceId() || null,
+      activeZone,
+      action,
+    });
+    if (scopedZone) {
+      result.suggested_zone_name = scopedZone.zone;
+      if (scopedZone.zone) result.zone_source = scopedZone.source;
+    } else if (action.suggested_zone && realZones.includes(action.suggested_zone)) {
       result.suggested_zone_name = action.suggested_zone;
       // If zone doesn't exist, action is still available — just not zone-locked
     } else if (Array.isArray(action.zone_hints) && action.zone_hints.length > 0) {

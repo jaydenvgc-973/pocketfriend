@@ -72,8 +72,10 @@ export const ACTION_IMAGE_PROMPTS = {
   accessories_try: (loc, who) => `${who} trying on an accessory at a display mirror in an accessories store, photorealistic`,
   accessories_buy: (loc, who) => `An accessory being wrapped at an accessories store counter, small box and tissue paper, photorealistic`,
   study:           (loc, who) => `${who} studying at a desk with books and notes spread out, focused, photorealistic`,
-  cook:            (loc, who) => `${who} cooking in a kitchen, warm domestic lighting, photorealistic`,
-  watch_tv:        (loc, who) => `${who} relaxing on a couch watching TV in a cozy living room, photorealistic`,
+  // The activity never chooses the surroundings: cooking is cooking wherever it happens —
+  // a full kitchen, a hot plate, a fire, a camp stove. The room comes from the zone.
+  cook:            (loc, who) => `${who} cooking — preparing a meal with the cookware and cooking equipment that are actually present in this space, warm domestic lighting, photorealistic. No other people.`,
+  watch_tv:        (loc, who) => `${who} watching something on a screen that is actually in this space, relaxed, photorealistic. No other people.`,
   order_drink_bar: (loc, who) => `Close-up of two cocktails being raised in a toast at a bar, photorealistic`,
   // ── HOUSEHOLD ACTIVITIES ──
   // Each one depicts the activity actually in progress — never a passive standing pose.
@@ -83,18 +85,22 @@ export const ACTION_IMAGE_PROMPTS = {
   home_clean_up:   (loc, who) => who.includes("empty")
     ? `Tidy home interior with cleaning supplies and folded cloths, no people, photorealistic.`
     : `${who} actively cleaning the home — sweeping or vacuuming the floor, wiping down a surface, holding cleaning supplies, mid-motion, sleeves pushed up, photorealistic. No other people.`,
+  // Washing up happens at whatever sink this space actually has; a tent has no kitchen sink,
+  // and none is drawn for it.
   home_dishes:     (loc, who) => who.includes("empty")
-    ? `Kitchen sink filled with soapy water and clean plates on the drying rack, no people, photorealistic.`
-    : `${who} standing at the kitchen sink washing dishes, hands in soapy water, plates on the drying rack, warm kitchen light, photorealistic. No other people.`,
+    ? `A sink filled with soapy water and clean plates on a drying rack, no people, photorealistic.`
+    : `${who} washing dishes at the sink that is actually here, hands in soapy water, plates on a drying rack, photorealistic. No other people.`,
+  // Teeth are brushed with whatever water is actually available — a sink, a tap, a bottle.
   home_brush_teeth:(loc, who) => who.includes("empty")
-    ? `Bathroom sink with a toothbrush and toothpaste, mirror, no people, photorealistic.`
-    : `${who} brushing their teeth at the bathroom sink, toothbrush in mouth, toothpaste foam, mirror reflection, photorealistic. No other people.`,
+    ? `A toothbrush and toothpaste beside a water source, no people, photorealistic.`
+    : `${who} brushing their teeth — toothbrush in mouth, toothpaste foam — using the water source this space actually has, photorealistic. No other people.`,
+  // A shower is a shower wherever the water comes from: a stall, a portable unit, a bag.
   home_shower:     (loc, who) => who.includes("empty")
-    ? `Steamy bathroom with the shower running behind glass, no people, photorealistic.`
-    : `${who} taking a shower, unclothed — no clothing, no towel worn — water running, steam filling the bathroom, wet hair, body concealed by steam and a frosted-glass partition, seen from behind or from the shoulders up, tasteful and non-explicit, photorealistic. No other people.`,
+    ? `A running shower with steam rising, no people, photorealistic.`
+    : `${who} taking a shower, unclothed — no clothing, no towel worn — water running, steam, wet hair, body concealed by steam and the partition or the camera angle, seen from behind or from the shoulders up, tasteful and non-explicit, photorealistic. No other people.`,
   home_make_bed:   (loc, who) => who.includes("empty")
-    ? `Neatly made bed in a sunlit bedroom, folded duvet and arranged pillows, no people, photorealistic.`
-    : `${who} making the bed in the bedroom — smoothing the duvet, tucking sheets, fluffing a pillow, morning light, photorealistic. No other people.`,
+    ? `A neatly made bed with a folded duvet and arranged pillows, no people, photorealistic.`
+    : `${who} making the bed — smoothing the duvet, tucking sheets, fluffing a pillow, photorealistic. No other people.`,
   // Moonwink — a consensual encounter between adults. The label is interface-only and
   // never reaches the picture or the prose, so the prompt describes the moment itself:
   // both of them unclothed, both clearly willing, and nothing explicit shown. Unclothed
@@ -156,6 +162,32 @@ export const ACTION_IMAGE_PROMPTS = {
   jail_take_medical:   (loc, who) => `A correctional officer in uniform escorting an inmate in a plain facility uniform into a prison medical unit, a nurse in a plain nurse uniform waiting by the examination table, photorealistic.`,
   jail_take_visiting:  (loc, who) => `A correctional officer in uniform escorting an inmate in a plain facility uniform into a prison visiting area with fixed tables, a visitor waiting at one of them, photorealistic.`,
 };
+
+/**
+ * THE ROOM IS THE ZONE'S, NOT THE ACTIVITY'S.
+ *
+ * An activity supplies what the people are DOING and, at most, the temporary objects that
+ * doing it needs. It never supplies the room, and it never upgrades the room to suit
+ * itself: a tent does not grow a stove, cabinets or a bathroom sink because someone cooked,
+ * brushed their teeth or washed; a living room does not gain a television because Watch TV
+ * was chosen. The zone's own reference images define the space, exactly as Places assigned
+ * it — and that is what makes two residences with different kitchens stay different.
+ */
+const ENVIRONMENT_AUTHORITY = ` ENVIRONMENT AUTHORITY — MANDATORY: the room, its layout, furniture, appliances, fixtures, flooring, cabinetry, décor and condition come only from the supplied reference image of this space. Reproduce that space exactly as it is; never upgrade, downgrade, restyle, refurnish or replace it, and never add a stove, oven, cabinets, countertop, sink, shower, bathtub, couch, television, bed, table or any other fixture that the reference does not already show. Only the objects the activity itself needs may appear — a plate, a cup, a bottle, a toothbrush, a washcloth, a cooking pot, a pan, a portable cooking ring — and they stay temporary: they never become part of the room or of anyone's belongings. Camera angle and body position may change; the environment may not.`;
+
+function withEnvironmentAuthority(prompt) {
+  if (typeof prompt !== "string" || !prompt) return prompt;
+  if (prompt.includes("ENVIRONMENT AUTHORITY")) return prompt;
+  return `${prompt}${ENVIRONMENT_AUTHORITY}`;
+}
+
+// Applied once, here, so every activity picture carries the rule — no call site has to
+// remember it and no new pipeline is introduced.
+Object.keys(ACTION_IMAGE_PROMPTS).forEach((id) => {
+  const build = ACTION_IMAGE_PROMPTS[id];
+  if (typeof build !== "function") return;
+  ACTION_IMAGE_PROMPTS[id] = (loc, who) => withEnvironmentAuthority(build(loc, who));
+});
 
 // ── HOUSEHOLD ACTIVITIES ──
 // Ids whose image must show the person actually doing the thing. The user is named in

@@ -40,9 +40,11 @@ export function useSceneSpaceImage({
   // The exact space on screen is published here, so every picture of this scene is composed
   // from the description of that space — the room, then its residence or workplace, then
   // the property.
-  useEffect(() => {
-    setActiveSceneSpaceId(unitIdFromSpaceKey(spaceKey));
-  }, [spaceKey]);
+  //
+  // Published on the render that carries it, not in an effect, so anything that reads the
+  // space during this same render — the activity strip resolving where an activity happens
+  // — sees the space that is actually on screen, never the one before it.
+  setActiveSceneSpaceId(unitIdFromSpaceKey(spaceKey));
 
   // A change of cast re-renders the scene with those people. A picture already being drawn
   // finishes first, so the new cast is never replaced by the previous one.
