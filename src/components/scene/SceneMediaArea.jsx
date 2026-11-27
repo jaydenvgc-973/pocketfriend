@@ -104,9 +104,10 @@ export default function SceneMediaArea({
         </div>
       ) : sceneImage ? (
         <button onClick={() => onLightbox?.(sceneImage)} className="w-full h-full block group relative">
-          {/* The whole picture, never a crop: the generated composition keeps its own
-              proportions and the unused space around it stays part of the frame. */}
-          <img src={sceneImage} alt={location.name} className="w-full h-full object-contain" style={{ imageOrientation: 'from-image' }} />
+          {/* The picture fills its rectangular frame edge to edge, as it always has: the
+              square composition keeps its proportions and is cropped from the centre, so the
+              main action stays in view. The click-to-enlarge view shows the whole image. */}
+          <img src={sceneImage} alt={location.name} className="w-full h-full object-cover object-center" style={{ imageOrientation: 'from-image' }} />
           <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
             <ZoomIn className="w-6 h-6 text-white drop-shadow" />
           </div>

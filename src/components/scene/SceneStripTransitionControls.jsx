@@ -5,8 +5,10 @@ import { Siren, Compass, DollarSign, HandCoins, Smartphone, Car, Flag } from "lu
  * financial interaction (who pays, who is paid, then the Chat page's own modal); Open Phone
  * opens the scene phone. None of them changes an activity, a balance or the scene itself.
  */
+// A phone shows these cards at roughly two thirds of the desktop size so the strip takes
+// less of the screen; from tablet up the established size is kept unchanged.
 const extraCardClass =
-  "flex flex-col items-center justify-center gap-1 p-1.5 w-[78px] min-w-[78px] rounded-xl border transition-all text-center flex-shrink-0 snap-center bg-secondary border-border hover:border-primary/30";
+  "flex flex-col items-center justify-center gap-0.5 p-1 w-[54px] min-w-[54px] md:gap-1 md:p-1.5 md:w-[78px] md:min-w-[78px] rounded-xl border transition-all text-center flex-shrink-0 snap-center bg-secondary border-border hover:border-primary/30";
 
 export function SendMoneyControl({ onClick, disabled = false }) {
   return (
@@ -68,7 +70,7 @@ export function ArrestControl({ onArrest, arrestDisabled = false }) {
       onClick={onArrest}
       disabled={arrestDisabled}
       title={arrestDisabled ? "No one in this scene can be arrested" : "Take someone into custody"}
-      className={`flex flex-col items-center justify-center gap-1 p-1.5 w-[78px] min-w-[78px] rounded-xl border-2 transition-all text-center flex-shrink-0 snap-center ${arrestDisabled ? "opacity-40 cursor-not-allowed border-destructive/20 bg-destructive/5" : "bg-destructive/15 border-destructive/60 hover:bg-destructive/25"}`}
+      className={`flex flex-col items-center justify-center gap-0.5 p-1 w-[54px] min-w-[54px] md:gap-1 md:p-1.5 md:w-[78px] md:min-w-[78px] rounded-xl border-2 transition-all text-center flex-shrink-0 snap-center ${arrestDisabled ? "opacity-40 cursor-not-allowed border-destructive/20 bg-destructive/5" : "bg-destructive/15 border-destructive/60 hover:bg-destructive/25"}`}
     >
       <Siren className="w-4 h-4 text-destructive" />
       <span className="w-full text-[9px] text-destructive font-bold leading-tight whitespace-normal break-words text-center uppercase tracking-wide">Arrest</span>
@@ -81,7 +83,7 @@ export function NextSceneControl({ onNextScene }) {
     <button
       onClick={onNextScene}
       title="Move the scene to another location"
-      className="flex flex-col items-center justify-center gap-1 p-2 rounded-xl border-2 transition-all text-center flex-shrink-0 snap-center bg-primary/15 border-primary/60 hover:bg-primary/25"
+      className="flex flex-col items-center justify-center gap-0.5 p-1.5 md:gap-1 md:p-2 rounded-xl border-2 transition-all text-center flex-shrink-0 snap-center bg-primary/15 border-primary/60 hover:bg-primary/25"
     >
       <Compass className="w-4 h-4 text-primary" />
       <span className="text-[9px] text-primary font-bold leading-tight whitespace-nowrap uppercase tracking-wide">Next Scene</span>
@@ -102,7 +104,7 @@ export function ArriveAtDestinationControl({ destinationName, onArrive }) {
     <button
       onClick={onArrive}
       title={destinationName ? `Finish the ride at ${destinationName}` : "Finish the ride at the destination"}
-      className="flex flex-col items-center justify-center gap-1 p-2 rounded-xl border-2 transition-all text-center flex-shrink-0 snap-center bg-emerald-500/15 border-emerald-500/60 hover:bg-emerald-500/25"
+      className="flex flex-col items-center justify-center gap-0.5 p-1.5 md:gap-1 md:p-2 rounded-xl border-2 transition-all text-center flex-shrink-0 snap-center bg-emerald-500/15 border-emerald-500/60 hover:bg-emerald-500/25"
     >
       <Flag className="w-4 h-4 text-emerald-400" />
       <span className="text-[9px] text-emerald-400 font-bold leading-tight whitespace-normal break-words uppercase tracking-wide">Arrive at Destination</span>
