@@ -122,6 +122,13 @@ Deno.serve(async (req) => {
             if (id) workerIds.add(id);
           }
         }
+        // A business inside the shared property employs its own people. They work inside
+        // this place, so the shared property is their visibility boundary too.
+        for (const workplace of (loc.workplaces || [])) {
+          for (const id of (workplace?.worker_character_ids || [])) {
+            if (id) workerIds.add(id);
+          }
+        }
       }
 
       if (workerIds.size > 0) {
@@ -166,6 +173,35 @@ Deno.serve(async (req) => {
           c.resolved_current_location_id &&           // must have a resolved location
           sharedLocIds.has(c.resolved_current_location_id)
         );
+      }
+
+      // ── Residents: the people who live inside shared locations ──
+      // An apartment, a house or a tent inside a shared property is home for the people
+      // assigned to it, whichever account owns those records. They belong to that place's
+      // Who's Here, so the shared location is their visibility boundary too. Their own
+      // resolved presence still decides whether they are actually there right now.
+      const residentIds = new Set();
+      for (const loc of sharedLocs) {
+        for (const unit of (loc.residential_units || [])) {
+          for (const id of (unit?.occupant_character_ids || [])) if (id) residentIds.add(id);
+        }
+        for (const r of (loc.residents || [])) if (r?.character_id) residentIds.add(r.character_id);
+      }
+      const knownIds = new Set([...sharedLocationEmployees, ...sharedLocationVisitors].map((c) => c.id));
+      const missingResidentIds = [...residentIds].filter((id) => !knownIds.has(id));
+      if (missingResidentIds.length > 0) {
+        const residentChars = (await Promise.all(
+          missingResidentIds.map((id) =>
+            base44.asServiceRole.entities.Character.filter({ id }, null, 1).then((res) => res[0] || null).catch(() => null)
+          )
+        )).filter((c) =>
+          c &&
+          c.owner_email !== ownerEmail &&
+          c.status !== 'deleted' &&
+          c.status !== 'soft_deleted' &&
+          c.status !== 'merged'
+        );
+        sharedLocationVisitors = [...sharedLocationVisitors, ...residentChars];
       }
 
       if (sharedLocationEmployees.length > 0) {

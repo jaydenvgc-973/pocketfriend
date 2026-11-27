@@ -61,7 +61,16 @@ export function buildPossibleNpcs({
   }
   if (!isRestrictedEnv) { npcsTravelingHere.forEach((n) => { if (!npcs.find((x) => x.id === n.id)) npcs.push(n); }); }
   if (!isRestrictedEnv) { vgcDistributedNpcs.forEach((n) => { if (!npcs.find((x) => x.id === n.id)) npcs.push({ id: n.id, name: n.name, role: n.presence_reason === 'vgc_distribution' || n.presence_reason === 'vgc_rotation' ? 'Visiting' : n.character_type === 'family_npc' ? 'Family' : 'NPC', isNpc: true, npcType: 'customer', avatar_url: n.avatar_url || null, personality_summary: n.personality_summary, emotional_state: n.emotional_state }); }); }
-  hereNowFromPresence.forEach((n) => { if (!npcs.find((x) => x.id === n.id)) npcs.push(n); });
+  // Someone present keeps the space they belong to in this property when Places already
+  // records one — an apartment, a house, a tent, a business. The label is read from that
+  // assignment; it never moves anyone and is never guessed from the parent's own name.
+  hereNowFromPresence.forEach((n) => {
+    if (npcs.find((x) => x.id === n.id)) return;
+    const unit = getUnitForCharacter(location, n.id);
+    const workplace = (location?.workplaces || []).find((w) => (w.worker_character_ids || []).includes(n.id));
+    const spaceLabel = unit ? getUnitLabel(unit.unit_name, location) : workplace?.name || null;
+    npcs.push(spaceLabel ? { ...n, unit_name: spaceLabel } : n);
+  });
   extraNpcs.forEach((n) => { if (!npcs.find((x) => x.id === n.id)) npcs.push({ ...n, npcType: n.npcType || 'present' }); });
   return npcs.filter((n, i, arr) => arr.findIndex((x) => x.id === n.id) === i);
 }
