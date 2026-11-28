@@ -228,6 +228,9 @@ export default function Scene() {
 
   const { characters, activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner, sceneCaregivers, npcRegular, sharedLocationEmployees, sharedLocationVisitors } = useSceneCharacters(currentUser);
 
+  // Courthouse picker pool: a test-flagged regular NPC is a real record, so a court proceeding may offer one.
+  const courtCharacters = useMemo(() => [...characters, ...(npcRegular || []).filter((c) => c?.is_test_character === true && c.character_type === 'npc_regular' && c.life_status !== 'deceased' && !['deceased', 'deleted', 'soft_deleted', 'merged'].includes(c.status))], [characters, npcRegular]);
+
   const location = locationsData.find((l) => l.id === locationId) || directLocation || null;
 
   // Regular NPCs are present in the world like anyone else, so they appear in Who's Here.
@@ -1649,7 +1652,7 @@ export default function Scene() {
   } = useGovernmentVenueScene({
     location,
     locationId,
-    characters,
+    characters: courtCharacters,
     observeMode,
     observeCast,
     displayName,
@@ -1663,7 +1666,7 @@ export default function Scene() {
       const isTempEventNpc = (id) => String(id).startsWith("npc_court_") || id === "npc_cityhall_officiant";
       const remoteIds = remoteParticipants.map((p) => p.id);
       const drop = (id) => isTempEventNpc(id) || remoteIds.includes(id);
-      setExtraNpcs((prev) => prev.filter((n) => !drop(n.id) && n.npcType !== "remote_participant"));
+      setExtraNpcs((prev) => prev.filter((n) => !drop(n.id) && n.npcType !== "remote_participant" && n.npcType !== "court_participant"));
       setSelectedNpcIds((prev) => (prev || []).filter((id) => !drop(id)));
       setObserveCastIds((prev) => (prev ? prev.filter((id) => !remoteIds.includes(id)) : prev));
       setRemoteParticipants([]);
@@ -1692,6 +1695,11 @@ export default function Scene() {
         ...remote.map((p) => ({ id: p.id, name: p.name, role: `${p.roleLabel} — appearing remotely`, isNpc: false, npcType: "remote_participant", avatar_url: p.avatar_url })),
       ]);
     }
+    // A role held by someone outside the scene pool (a test-flagged regular NPC) still joins the proceeding.
+    const courtOnly = (prepared.attendanceIds || []).filter((id) => !characters.some((c) => c.id === id))
+      .map((id) => courtCharacters.find((c) => c.id === id)).filter(Boolean)
+      .map((c) => ({ id: c.id, name: c.name, role: "Court participant", isNpc: false, npcType: "court_participant", avatar_url: c.avatar_url || null }));
+    if (courtOnly.length > 0) setExtraNpcs((prev) => [...prev.filter((n) => n.npcType !== "court_participant"), ...courtOnly]);
     const cast = [...temps.map((n) => n.id), ...(prepared.attendanceIds || [])];
     if (cast.length > 0) setSelectedNpcIds((prev) => [...new Set([...(prev || []), ...cast])]);
     // Watching a proceeding: everyone the case established is in the room for the whole
@@ -2420,7 +2428,7 @@ export default function Scene() {
           open={showVenueSetup}
           venueType={governmentVenueType}
           location={location}
-          characters={characters}
+          characters={governmentVenueType === "courthouse" ? courtCharacters : characters}
           currentUser={currentUser}
           onClose={() => setShowVenueSetup(false)}
           onBegin={handleBeginGovernmentVisit}
