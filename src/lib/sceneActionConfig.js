@@ -259,6 +259,38 @@ export const IN_WORLD_ACTIVITY_TEXT = {
     // The same thing said between two named people, for a line that names them both.
     pair: "is intimate with",
   },
+  // ── SHOPPING ──
+  // Choosing a shopping activity means LOOKING. Merchandise has not been bought, tried on or
+  // owned at this point, so the scene is told what the shopper is doing rather than handed
+  // a button that reads like a purchase.
+  buy_outfit: {
+    direction: "the person shopping is looking for a complete outfit to try or buy — nothing has been chosen or purchased yet",
+    past: "is looking for an outfit",
+  },
+  clothing_buy: {
+    direction: "the person shopping is looking at items in this store — nothing has been chosen or purchased yet",
+    past: "is looking at what this store has",
+  },
+  shoe_buy: {
+    direction: "the person shopping is looking for shoes — nothing has been chosen or purchased yet",
+    past: "is looking for shoes",
+  },
+  shop_mens_clothing: {
+    direction: "the person shopping is looking through the men's clothing — nothing has been chosen or purchased yet",
+    past: "is looking through the men's clothing",
+  },
+  shop_womens_clothing: {
+    direction: "the person shopping is looking through the women's clothing — nothing has been chosen or purchased yet",
+    past: "is looking through the women's clothing",
+  },
+  accessories_buy: {
+    direction: "the person shopping is looking at accessories — nothing has been chosen or purchased yet",
+    past: "is looking at the accessories",
+  },
+  buy: {
+    direction: "the person shopping is looking around this store — nothing has been chosen or purchased yet",
+    past: "is looking around the store",
+  },
 };
 
 // ── DIRECTED INTERACTION PROMPTS ──────────────────────────────────────────────

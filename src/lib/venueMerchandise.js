@@ -156,6 +156,21 @@ export const MERCHANDISE_FAMILIES = {
   },
 };
 
+/** A readable name for each existing merchandise family. */
+export const MERCHANDISE_FAMILY_LABELS = {
+  sneakers: "Sneakers",
+  clothing: "Clothing",
+  mens_clothing: "Men's Clothing",
+  womens_clothing: "Women's Clothing",
+  accessories: "Accessories",
+  home_goods: "Home Goods",
+  music: "Music",
+  books: "Books",
+  electronics: "Electronics",
+  toys: "Toys",
+  gifts: "Gifts",
+};
+
 /** Business venue type → the merchandise family it sells. */
 export const VENUE_MERCHANDISE_FAMILY = {
   // Footwear
@@ -229,13 +244,54 @@ export function merchandiseFamiliesForVenue(subtypes) {
  * Returns null when nothing is known about the venue — the caller then keeps its own
  * established resolution instead of inventing merchandise.
  */
-export function pickMerchandise(families) {
-  const keys = (Array.isArray(families) ? families : [families]).filter(
+export function pickMerchandise(families, preferences = null) {
+  let keys = (Array.isArray(families) ? families : [families]).filter(
     (f) => MERCHANDISE_FAMILIES[f]
   );
   if (keys.length === 0) return null;
+
+  // A stated preference for particular merchandise types narrows the offer to those, among
+  // the ones this store actually sells. It never adds a category the store does not carry.
+  const preferred = (preferences?.families || []).filter((f) => keys.includes(f));
+  if (preferred.length > 0) keys = preferred;
+
   const family = keys[Math.floor(Math.random() * keys.length)];
   const meta = MERCHANDISE_FAMILIES[family];
-  const label = meta.pool[Math.floor(Math.random() * meta.pool.length)];
+
+  // The shopper's own words describe the item they are looking for. When they gave none,
+  // an item from this family's own pool is offered — filtered to the stated styles where
+  // those pools contain something that fits, and never invented beyond them.
+  const note = String(preferences?.note || "").trim().replace(/[.!]+$/, "");
+  let label;
+  if (note) {
+    label = note.charAt(0).toUpperCase() + note.slice(1);
+  } else {
+    const styleHint = STYLE_POOL_HINTS[(preferences?.categories || [])[0]];
+    const matching = styleHint ? meta.pool.filter((item) => styleHint.test(item)) : [];
+    const pool = matching.length > 0 ? matching : meta.pool;
+    label = pool[Math.floor(Math.random() * pool.length)];
+  }
+
   return { family, label, category: meta.category, wearable: meta.wearable };
 }
+
+/**
+ * Which of a family's own established items suit a stated outfit category. These only
+ * filter labels that already exist in the pools above; no item is created here.
+ */
+const STYLE_POOL_HINTS = {
+  formal: /suit|blazer|coat|dress|gown|heels|loafer|oxford/i,
+  work: /suit|blazer|shirt|blouse|chino|pants|coat|cardigan|loafer|oxford/i,
+  church: /suit|blazer|dress|shirt|blouse|coat/i,
+  school: /shirt|sweater|hoodie|jeans|sneaker|cardigan/i,
+  gym: /sneaker|running|trail|hoodie|tank|short/i,
+  daily_casual: /tee|jean|hoodie|sneaker|shirt|sweater|cardigan/i,
+  outdoor: /jacket|coat|sneaker|trail|boot/i,
+  nightlife: /dress|jacket|sneaker|heels|statement|jumpsuit/i,
+  date_night: /dress|jacket|blouse|shirt|suit/i,
+  lounge: /sweater|hoodie|cardigan|tank/i,
+  sleepwear: /sweater|hoodie|tank/i,
+  swimwear: /sneaker|tee/i,
+  bath: /sweater|hoodie/i,
+  special: /dress|jacket|coat|statement|jumpsuit/i,
+};

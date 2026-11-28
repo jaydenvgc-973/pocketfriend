@@ -80,6 +80,9 @@ export default function SceneActionStrip({
   directedPickableTargets,
   governmentVenueType,
   setShowVenueSetup,
+  // This store visit's stated purpose, and the control that reopens it. Only offered inside
+  // a retail destination, in the same strip as everything else.
+  onOpenShoppingPreferences = null,
   cityHallPlan,
   setShowChangeClothesModal,
   characterInviter,

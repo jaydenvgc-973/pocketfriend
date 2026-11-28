@@ -52,6 +52,9 @@ export default function ProductPurchaseModal({
   location_name,
   item_kind,
   userPresent = true,
+  // The individual who chose to perform the shopping activity. They are the payer offered
+  // first; the selection stays editable and the recipient is a separate choice.
+  defaultPayerId = null,
 }) {
   const queryClient = useQueryClient();
   const [isProcessing, setIsProcessing] = useState(false);
@@ -62,6 +65,7 @@ export default function ProductPurchaseModal({
   // viewing, the User is not at the store: the character present is the one buying, so
   // their own funds are offered first and the absent User is never charged by default.
   const [payerId, setPayerId] = useState(() => {
+    if (defaultPayerId) return defaultPayerId;
     if (userPresent) return "user";
     const candidate = (traveledWithChars || []).find((c) => c?.id && !onShiftEmployeeIds.includes(c.id));
     return candidate?.id || "user";
@@ -95,6 +99,14 @@ export default function ProductPurchaseModal({
   const payerCandidates = presentPeople.filter((c) => !onShiftEmployeeIds.includes(c.id));
   const payerCharacter = payerCandidates.find((c) => c.id === payerId) || null;
   const payerIsCharacter = !!payerCharacter;
+
+  // A preselected shopper who cannot pay here (on shift, or no longer present) falls back to
+  // the established default instead of charging someone who is not shopping.
+  useEffect(() => {
+    if (!payerId || payerId === "user") return;
+    if (payerCandidates.some((c) => c.id === payerId)) return;
+    setPayerId(userPresent ? "user" : (payerCandidates[0]?.id || "user"));
+  }, [payerId, payerCandidates.map((c) => c.id).join(","), userPresent]);
 
   const isOutfit = item_kind === "outfit";
   // Non-wearable merchandise (home goods, records, books…) is bought, never closeted.
@@ -142,7 +154,7 @@ export default function ProductPurchaseModal({
     setError(null);
     setRecipientId(null);
     setRecipientQuery("");
-    setPayerId("user");
+    setPayerId(defaultPayerId || "user");
     rememberPaidPurchase(null);
   };
 

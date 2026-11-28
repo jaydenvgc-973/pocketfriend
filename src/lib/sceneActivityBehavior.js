@@ -51,6 +51,10 @@ export function activityBehaviorFor(action) {
   const id = action.id;
   if (IMMEDIATE_ACTIVITY_IDS.has(id)) return 'immediate';
   if (EATING_ACTION_IDS.includes(id)) return 'immediate';
+  // A store offer is NOT a completed purchase: choosing it presents merchandise the shopper
+  // may pass, try on or buy. Only the purchase step transacts, so the moment is played out
+  // now rather than treated as something already bought.
+  if (action.action_class === 'purchase' && action.purchase_source === 'store') return 'direct';
   if (['purchase', 'service', 'fee'].includes(action.action_class)) return 'immediate';
   return 'direct';
 }

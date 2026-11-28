@@ -508,10 +508,10 @@ const CLOTHING_STORE_ACTIONS = classifyAll([
   { id: "clothing_ask_size", label: "Ask for a size", emoji: "🙋", cost: 0, type: "social", requires_staff: true },
   { id: "clothing_ask_price", label: "Ask the price", emoji: "💰", cost: 0, type: "social", requires_staff: true },
   { id: "buy", label: "Buy something", emoji: "💳", cost: 35, type: "functional", payer: "user", action_category: "clothing", purchase_source: "store", suggested_zone: "Register", requires_staff: true },
-  { id: "clothing_buy", label: "Buy item", emoji: "🛒", cost: 35, type: "functional", payer: "user", action_category: "clothing", purchase_source: "store", suggested_zone: "Register", requires_staff: true },
+  { id: "clothing_buy", label: "Find item", emoji: "🛒", cost: 35, type: "functional", payer: "user", action_category: "clothing", purchase_source: "store", suggested_zone: "Register", requires_staff: true, requires_actor: true },
   // A complete outfit is a different purchase from a single piece: it goes through the
   // same product card and transaction authority, and lands in the recipient's Outfits.
-  { id: "buy_outfit", label: "Buy outfit", emoji: "👗", cost: 120, type: "functional", payer: "user", action_category: "clothing", purchase_source: "store", item_kind: "outfit", suggested_zone: "Register", requires_staff: true },
+  { id: "buy_outfit", label: "Find outfit", emoji: "👗", cost: 120, type: "functional", payer: "user", action_category: "clothing", purchase_source: "store", item_kind: "outfit", suggested_zone: "Register", requires_staff: true, requires_actor: true },
   { id: "clothing_accessories", label: "Check accessories", emoji: "👜", cost: 0, type: "observational", suggested_zone: "Accessories" },
   { id: "clothing_register", label: "Go to register", emoji: "🏷️", cost: 0, type: "functional", suggested_zone: "Register", requires_staff: true },
   { id: "ask_help", label: "Ask for help", emoji: "🙋", cost: 0, type: "social", requires_staff: true },
@@ -527,7 +527,7 @@ const SHOE_STORE_ACTIONS = classifyAll([
   { id: "shoe_mirror", label: "Check them in the mirror", emoji: "🪞", cost: 0, type: "functional", suggested_zone: "Sales Floor" },
   { id: "shoe_ask_size", label: "Ask for a size", emoji: "🙋", cost: 0, type: "social", requires_staff: true },
   { id: "shoe_ask_price", label: "Ask the price", emoji: "💰", cost: 0, type: "social", requires_staff: true },
-  { id: "shoe_buy", label: "Buy the shoes", emoji: "💳", cost: 120, type: "functional", payer: "user", action_category: "clothing", purchase_source: "store", suggested_zone: "Register", requires_staff: true },
+  { id: "shoe_buy", label: "Find shoes", emoji: "💳", cost: 120, type: "functional", payer: "user", action_category: "clothing", purchase_source: "store", suggested_zone: "Register", requires_staff: true, requires_actor: true },
   { id: "buy", label: "Buy something", emoji: "🛒", cost: 120, type: "functional", payer: "user", action_category: "clothing", purchase_source: "store", suggested_zone: "Register", requires_staff: true },
   { id: "ask_help", label: "Ask for help", emoji: "🙋", cost: 0, type: "social", requires_staff: true },
 ]);
@@ -808,8 +808,8 @@ function resolveActionLibraries(location) {
 // carries gets its own purchase action, and Buy Something draws from all of them.
 // Established ids, prices, the product card and the transaction pathway are unchanged.
 const SHOPPING_ACTION_BY_FAMILY = {
-  sneakers:    { id: 'shoe_buy',        label: 'Buy Sneakers',    emoji: '👟', cost: 120 },
-  clothing:    { id: 'clothing_buy',    label: 'Buy Clothing',    emoji: '🛒', cost: 35 },
+  sneakers:    { id: 'shoe_buy',        label: 'Find Sneakers',   emoji: '👟', cost: 120 },
+  clothing:    { id: 'clothing_buy',    label: 'Find item',       emoji: '🛒', cost: 35 },
   // Apparel is shopped as men's or women's — the chosen category decides the merchandise.
   mens_clothing:   { id: 'shop_mens_clothing',   label: "Shop Men's Clothing",   emoji: '👔', cost: 35 },
   womens_clothing: { id: 'shop_womens_clothing', label: "Shop Women's Clothing", emoji: '👗', cost: 35 },
@@ -848,6 +848,9 @@ function buildVenueShoppingActions(venue, libraries) {
         merchandise: family,
         suggested_zone: 'Register',
         requires_staff: true,
+        // The person performing the shopping is chosen through the existing actor selector:
+        // one shopper, never every participant.
+        requires_actor: true,
       };
     })
     .filter(Boolean);
@@ -866,6 +869,7 @@ function buildVenueShoppingActions(venue, libraries) {
     merchandise: families,
     suggested_zone: 'Register',
     requires_staff: true,
+    requires_actor: true,
   });
 
   // A complete outfit stays its own purchase wherever clothing is sold.

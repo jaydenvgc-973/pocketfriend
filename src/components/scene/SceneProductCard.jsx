@@ -35,6 +35,14 @@ export default function SceneProductCard({
   const buildItemPrompt = () => {
     const itemLabel = msg.item_label || "product";
     const category = msg.item_category;
+    // What the shopper said they were looking for, kept with this card's own merchandise.
+    const statedStyles = (msg.shopping_preferences?.categories || []).map((c) => String(c).replace(/_/g, " "));
+    const statedNote = String(msg.shopping_preferences?.note || "").trim();
+    const preference = [
+      statedStyles.length > 0 ? `styled for ${statedStyles.join(", ")}` : null,
+      statedNote ? `as described: ${statedNote}` : null,
+    ].filter(Boolean).join(", ");
+    const prefSuffix = preference ? `, ${preference}` : "";
 
     switch (category) {
       case "drink": {
@@ -65,7 +73,7 @@ export default function SceneProductCard({
         if (msg.item_kind === "outfit") {
           return `Professional retail flat-lay photography of a complete ${itemLabel} outfit — every piece of the look laid out together on a clean light background, studio lighting, high detail, no people wearing it`;
         }
-        return `Professional retail product photography of ${itemLabel}, isolated on clean white background, studio lighting, high detail, no people`;
+        return `Professional retail product photography of ${itemLabel}, isolated on clean white background, studio lighting, high detail, no people${prefSuffix}`;
       case "home_goods":
         return `Professional product photography of ${itemLabel}, clean white or light grey background, studio shot, sharp detail, no people`;
       case "hardware":
@@ -138,6 +146,9 @@ export default function SceneProductCard({
         action_class: msg.action_class || 'purchase',
         purchase_source: msg.purchase_source || 'menu',
         item_kind: msg.item_kind || 'item',
+        // The person who chose to shop is the payer offered first. It stays editable, and
+        // the recipient is never derived from it.
+        default_payer_id: msg.shopper_character_id || (msg.shopper_is_user ? "user" : null),
       });
     } else {
       // Consumable — route through transaction authority.
@@ -181,7 +192,7 @@ export default function SceneProductCard({
     // merchandise, never a charge. The offer is made from the store's own merchandise.
     const families = msg.item_merchandise_families
       || (msg.item_merchandise ? [msg.item_merchandise] : null);
-    const next = families ? pickMerchandise(families) : null;
+    const next = families ? pickMerchandise(families, msg.shopping_preferences) : null;
     if (next) {
       setMessages(prev => [
         ...prev.filter(m => m.id !== msg.id),

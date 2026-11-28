@@ -62,7 +62,7 @@ export function isPurchaseOfferAction(action) {
  * the card is accepted. The character present is the buyer — their own funds, not the
  * absent user's.
  */
-export function presentOfferInWatchedScene({ action, names, actorId, locationName, setMessages, checkImageTrigger, activityBehaviorFor, activityFeedLine }) {
+export function presentOfferInWatchedScene({ action, names, actorId, locationName, setMessages, checkImageTrigger, activityBehaviorFor, activityFeedLine, preferences = null, shopper = null }) {
   const cost = Number(action.cost) || 0;
   const isPaid = action.action_class === 'purchase' && cost > 0;
   const behavior = activityBehaviorFor(action);
@@ -80,7 +80,7 @@ export function presentOfferInWatchedScene({ action, names, actorId, locationNam
     is_canon_event: false,
     timestamp: new Date().toISOString(),
   }]);
-  checkImageTrigger(`[${action.emoji} ${action.label}]`, null, action.action_category, isPaid ? cost : null, isPaid ? (action.purchase_source || 'menu') : 'complimentary', !isPaid, action.item_kind || null, action.merchandise || null, 'character', actorId);
+  checkImageTrigger(`[${action.emoji} ${action.label}]`, null, action.action_category, isPaid ? cost : null, isPaid ? (action.purchase_source || 'menu') : 'complimentary', !isPaid, action.item_kind || null, action.merchandise || null, 'character', actorId, preferences, shopper);
 }
 
 export function checkImageTrigger({
@@ -97,6 +97,11 @@ export function checkImageTrigger({
   // is charged to that character. Carried on the card so Accept charges the right person.
   payerType = null,
   payerCharacterId = null,
+  // What this shopper said they are looking for, and who chose to shop. The stated purpose
+  // refines the offer; the shopper is the payer offered first on the card. Neither buys
+  // anything — the purchase step is still the only thing that transacts.
+  purchasePreferences = null,
+  shopper = null,
   location,
   messages,
   generateFocusedImage,
@@ -129,10 +134,13 @@ export function checkImageTrigger({
     // A store purchase offers something the store actually sells. The action carries the
     // merchandise family (or families, for Buy Something); only a venue that sells no
     // known merchandise falls back to the established conversation resolution.
-    const merchandise = purchaseMerchandise ? pickMerchandise(purchaseMerchandise) : null;
+    const merchandise = purchaseMerchandise ? pickMerchandise(purchaseMerchandise, purchasePreferences) : null;
+    const preferenceNote = String(purchasePreferences?.note || '').trim();
     const resolved = merchandise
       ? { label: merchandise.label, category: merchandise.category, wearable: merchandise.wearable }
-      : extractSceneItemLabel(text, messages, actionCategory, location);
+      : (preferenceNote && !purchaseMerchandise
+        ? { label: preferenceNote, category: actionCategory, wearable: actionCategory === 'clothing' }
+        : extractSceneItemLabel(text, messages, actionCategory, location));
     // Store merchandise always goes through the existing purchase modal, so the payer and
     // the recipient are chosen and a gift never has to be present. Only consumables
     // (food, drink, groceries) keep the direct deduction.
@@ -164,6 +172,13 @@ export function checkImageTrigger({
       // Show me something else stay in the same category and try on the same item.
       item_merchandise: merchandise?.family || null,
       item_merchandise_families: purchaseMerchandise ? [].concat(purchaseMerchandise) : null,
+      // The stated purpose of this visit and the individual doing the shopping. Kept on the
+      // card so another item, Try On and the purchase step stay in the same context.
+      shopping_preferences: purchasePreferences || null,
+      item_preference_note: preferenceNote || null,
+      shopper_character_id: shopper?.id || null,
+      shopper_is_user: shopper ? !!shopper.isUser : false,
+      shopper_name: shopper?.name || null,
       payer_type: payerType || 'user',
       payer_character_id: payerType === 'character' ? (payerCharacterId || null) : null,
       timestamp: new Date().toISOString(),
