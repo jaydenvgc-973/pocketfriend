@@ -17,6 +17,8 @@
  *  - Do NOT write any schedule data back to the database from this resolver.
  */
 
+import { resolveEmployerIdentity } from '@/lib/employerIdentity';
+
 // Kept as a reference constant for UI display purposes ONLY.
 // NEVER inject these values as if they were real stored schedule data.
 export const DEFAULT_SCHEDULE = {
@@ -28,6 +30,22 @@ export const DEFAULT_SCHEDULE = {
 };
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/**
+ * EMPLOYER, NOT BUILDING.
+ *
+ * An employment link is a LocationReference. When that record is a property holding
+ * businesses inside it (workplaces[]), the employer is the business that already claims
+ * this character there — the building is only where that business operates. Living in a
+ * building never makes it an employer, so a property that keeps businesses inside it is
+ * never named as the employer merely because no business claimed them.
+ *
+ * Reads the existing assignment only. Never creates, moves or reassigns employment.
+ */
+function resolveJobEmployer(loc, character) {
+  if (!loc) return null;
+  return resolveEmployerIdentity(loc, character.id);
+}
 
 export function formatScheduleLabel(days, startTime, endTime, isDefault = false) {
   const daysStr = days?.length > 0
@@ -82,6 +100,7 @@ export function resolveEmployment(character, locationList = []) {
     // Try to get shift from location record first
     const loc = character.occupation_location_id ? locMap[character.occupation_location_id] : null;
     const workerShift = loc?.worker_shifts?.[character.id];
+    const employer = resolveJobEmployer(loc, character);
 
     let schedule_days, start_time, end_time, source, is_default_schedule = false;
 
@@ -110,7 +129,12 @@ export function resolveEmployment(character, locationList = []) {
     jobs.push({
       job_title: character.work_details?.job_title || character.occupation || null,
       location_id: character.occupation_location_id || null,
-      location_name: character.occupation_location_name || loc?.name || null,
+      // The employer is the business inside the property that claims this character.
+      // The property itself is only the building it operates inside.
+      location_name: employer
+        ? employer.employer_name
+        : (character.occupation_location_name || loc?.name || null),
+      parent_location_name: employer?.shows_location ? employer.location_name : null,
       location_type: loc?.category || null,
       schedule_days,
       start_time,
@@ -126,6 +150,7 @@ export function resolveEmployment(character, locationList = []) {
     if (!addlLoc.location_id && !addlLoc.location_name && !addlLoc.job_title) continue;
     const loc = addlLoc.location_id ? locMap[addlLoc.location_id] : null;
     const workerShift = loc?.worker_shifts?.[character.id];
+    const employer = resolveJobEmployer(loc, character);
 
     let schedule_days, start_time, end_time, source, is_default_schedule = false;
     if (workerShift?.start || workerShift?.end) {
@@ -146,7 +171,10 @@ export function resolveEmployment(character, locationList = []) {
     jobs.push({
       job_title: addlLoc.job_title || null,
       location_id: addlLoc.location_id || null,
-      location_name: addlLoc.location_name || loc?.name || null,
+      location_name: employer
+        ? employer.employer_name
+        : (addlLoc.location_name || loc?.name || null),
+      parent_location_name: employer?.shows_location ? employer.location_name : null,
       location_type: loc?.category || null,
       schedule_days,
       start_time,
@@ -173,10 +201,12 @@ export function resolveEmployment(character, locationList = []) {
     const end_time = workerShift?.end || null;
     const is_default_schedule = false;
 
+    const listedEmployer = resolveJobEmployer(loc, character);
     jobs.push({
       job_title: loc.worker_job_titles?.[character.id] || null,
       location_id: loc.id,
-      location_name: loc.name || null,
+      location_name: listedEmployer ? listedEmployer.employer_name : (loc.name || null),
+      parent_location_name: listedEmployer?.shows_location ? listedEmployer.location_name : null,
       location_type: loc.category || null,
       schedule_days,
       start_time,
@@ -223,7 +253,9 @@ export function buildEmploymentPromptBlock(character, locationList = []) {
   const jobLines = jobs.length > 0
     ? jobs.map(j => {
         const schedPart = j.schedule_label ? ` | Schedule: ${j.schedule_label}` : '';
-        return `  • ${j.job_title || 'Employee'} at ${j.location_name || 'unlisted workplace'}${schedPart}`;
+        // The building is a secondary physical descriptor, never the employer.
+        const buildingPart = j.parent_location_name ? ` (inside ${j.parent_location_name})` : '';
+        return `  • ${j.job_title || 'Employee'} at ${j.location_name || 'unlisted workplace'}${buildingPart}${schedPart}`;
       }).join('\n')
     : '  • No job assigned';
 
@@ -240,8 +272,9 @@ PRESENCE (where you are RIGHT NOW — physical only):
   At assigned workplace: ${presence.is_at_assigned_workplace ? 'YES' : 'NO'}
 
 ⛔ RULES:
-  - Work questions → use EMPLOYMENT location(s) only
+  - Work questions → use EMPLOYMENT employer(s) only
   - Location questions → use current PRESENCE location only
   - NEVER call a visited location your workplace unless location_id matches employment
+  - Your employer is the business named above. A building that business operates inside is only the address you report to — never your employer, even when the building is also where you live
 ${mismatch ? `\n⚠️ MISMATCH ACTIVE: You are visiting "${presence.current_location_name}" but your job is at "${jobs[0].location_name}". You may say "I'm here right now" but NEVER "I work/manage here."` : ''}`;
 }

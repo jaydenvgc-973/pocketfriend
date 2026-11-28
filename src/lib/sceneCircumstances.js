@@ -19,6 +19,7 @@ import { isCharacterAtWork, isCharacterOnShift, isCharacterAtSchool, isLocationA
 import { isJailOrPrison, isIncarceratedCharacter } from '@/lib/jailSceneRules';
 import { buildRideContextBlock } from '@/lib/sceneRide';
 import { buildLocationAuthorityBlock } from '@/lib/locationAuthority';
+import { resolveEmployerIdentity } from '@/lib/employerIdentity';
 
 const nameOf = (p) => p?.name || p?.display_name || null;
 
@@ -86,19 +87,24 @@ function livesHere(person, location, homeResidentIds) {
 function elsewhereFacts(person, location, locationsById) {
   const bits = [];
   const workplaceId = person?.occupation_location_id || null;
-  const workplaceName = person?.occupation_location_name
-    || (workplaceId ? locationsById?.[workplaceId]?.name : null)
-    || null;
+  // The employer is the business inside the property that already claims this person;
+  // the property is only the building that business operates inside.
+  const wpLoc = workplaceId ? locationsById?.[workplaceId] || null : null;
+  const employer = wpLoc ? resolveEmployerIdentity(wpLoc, person.id) : null;
+  const workplaceName = employer
+    ? employer.employer_name
+    : (person?.occupation_location_name || wpLoc?.name || null);
+  const employerBuilding = employer?.shows_location ? employer.location_name : null;
   const job = person?.work_details?.job_title || person?.occupation || null;
 
   const employedElsewhere = !!workplaceId && workplaceId !== location?.id;
   if (employedElsewhere) {
-    const wpLoc = locationsById?.[workplaceId] || null;
     const shiftNow = wpLoc ? isCharacterOnShift(person.id, wpLoc) : null;
     const shiftLine = shiftNow === true
       ? 'Their shift there is in progress right now, so they are here on a break from it.'
       : shiftNow === false ? 'They are not on a shift there at this moment.' : '';
-    bits.push(`${nameOf(person)} WORKS AT ${workplaceName || 'another place'}${job ? ` as ${job}` : ''} — not here. ${shiftLine} They are NOT employed here and do not act as staff, take orders, or serve anyone here.`);
+    const buildingPart = employerBuilding ? ` (inside ${employerBuilding})` : '';
+    bits.push(`${nameOf(person)} WORKS AT ${workplaceName || 'another place'}${buildingPart}${job ? ` as ${job}` : ''} — not here. ${shiftLine} They are NOT employed here and do not act as staff, take orders, or serve anyone here.`);
   }
 
   const schoolId = person?.education_location_id || null;

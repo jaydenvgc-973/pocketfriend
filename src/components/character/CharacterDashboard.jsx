@@ -8,6 +8,7 @@ import {
 import TravelHistoryCard from "@/components/character/TravelHistoryCard";
 import { format, isAfter, parseISO, subDays } from "date-fns";
 import { getCharacterLivePresence } from "@/lib/locationResolutionEngine";
+import { resolveEmployerIdentity } from "@/lib/employerIdentity";
 
 // ── Emotion scoring — direction + intensity, not just impact tier ─────────────
 // Scale: 0=most distressed, 50=neutral, 100=most elevated positive
@@ -1240,13 +1241,21 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       if (liveStatus === "at_school") insights.push("Academic schedule is currently active.");
       if (liveStatus === "at_work") insights.push("Work schedule is currently active.");
 
-      // Employment / income source — resolve dynamically from character data
-      const workLocationName = character.occupation_location_name ||
-        (character.occupation_location_id && locationMap[character.occupation_location_id]?.name) ||
-        null;
+      // Employment / income source — the employer is the business inside the property that
+      // already claims this character. The property is only the building it operates inside.
+      const workLocationRecord = character.occupation_location_id
+        ? locationMap[character.occupation_location_id] || null
+        : null;
+      const employerIdentity = workLocationRecord
+        ? resolveEmployerIdentity(workLocationRecord, character.id)
+        : null;
+      const workLocationName = employerIdentity
+        ? employerIdentity.employer_name
+        : (character.occupation_location_name || workLocationRecord?.name || null);
+      const employerBuilding = employerIdentity?.shows_location ? employerIdentity.location_name : null;
       const hasEmploymentData = !!(character.occupation && (workLocationName || character.current_work_location_id));
       if (hasEmploymentData && workLocationName) {
-        insights.push(`Employed at ${workLocationName}${character.occupation ? ` as ${character.occupation}` : ''}.`);
+        insights.push(`Employed at ${workLocationName}${employerBuilding ? ` (inside ${employerBuilding})` : ''}${character.occupation ? ` as ${character.occupation}` : ''}.`);
       } else if (character.occupation && !workLocationName) {
         insights.push(`Occupation: ${character.occupation}. Work location not yet linked.`);
       }
