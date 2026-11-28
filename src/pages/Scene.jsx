@@ -45,6 +45,7 @@ import { buildTryOnPrompt, resolveTryOnZone } from "@/lib/sceneTryOnPrompt";
 import { createImageParticipantSelector } from "@/lib/sceneImageParticipants";
 import { useSceneCharacters } from "@/hooks/useSceneCharacters";
 import SceneNpcRow from "@/components/scene/SceneNpcRow";
+import SceneCharacterCommands, { isSleepingCharacter } from "@/components/scene/SceneCharacterCommands";
 import ScenePresenceStrip from "@/components/scene/ScenePresenceStrip";
 import { presentShoppingPeople, onShiftEmployeeIds, accountRecipients } from "@/lib/shoppingParticipants";
 import { purchaseConfirmationLine } from "@/lib/scenePurchaseCloset";
@@ -139,6 +140,8 @@ export default function Scene() {
   // The scene's phone. A presentation layer over existing messaging, games and Scene Photo.
   const [showPhone, setShowPhone] = useState(false);
   const [actionCooldown, setActionCooldown] = useState(false);
+  // Go to Sleep / Wake Up / Go Home / Go to Work — which one is asking WHO right now.
+  const [commandAction, setCommandAction] = useState(null);
   const [selectedNpcIds, setSelectedNpcIds] = useState(null);
   // Court participants taking part by remote link (in custody or hospitalized): in the
   // proceeding, never in the room.
@@ -309,13 +312,9 @@ export default function Scene() {
   const residencePresenceStatus = (char) => (
     char?.current_home_location_id && char.current_home_location_id === location?.id ? 'home' : 'visiting'
   );
-  // Moonwink and any other adults-only activity: only an adult may take part, judged by
-  // the application's established age rule (isAdultCharacter) — never by whether an
-  // optional field happens to be filled in. An unknown age is an adult unless the
-  // character has an established minor identity, so a character without a birthday is
-  // not refused the activity over a missing field. This one check feeds the strip, the
-  // who-and-who selector, the actor and partner lists, and the validation before the
-  // moment runs, so no part of the activity can disagree about who is an adult.
+  // Adults-only activities use the app's established age rule (isAdultCharacter), never a
+  // filled-in optional field. One check feeds the strip, both selectors and the validation,
+  // so no part of the activity can disagree about who is an adult.
   const isAdultForActivity = (person) => isAdultCharacter(person);
   const eligibleForAction = (list, action) => (
     action?.adults_only === true ? (list || []).filter(isAdultForActivity) : (list || [])
@@ -330,12 +329,8 @@ export default function Scene() {
   const homeResidentsAway = homeResidents.filter((c) => !isCharacterHome(c, locationMap));
 
   // ── APARTMENT (RESIDENTIAL UNIT) ──
-  // A multi-dwelling residence keeps its apartments in residential_units (Places). The
-  // apartment being visited — never the whole building — decides who is selected on open.
-  // Only the occupants of THAT unit who are actually home are picked automatically; a
-  // resident of another apartment stays available through Who's Here, unselected.
-  // Apartments, patient rooms and prison cells are the same kind of assignment — the
-  // space inside the facility that Places already defines. A hotel keeps its own flow.
+  // The apartment being visited — never the whole building — decides who is selected on
+  // open. Occupants of another unit stay available through Who's Here, unselected.
   const locationUnits = getAssignableUnits(location);
   const activeUnit = getUnitById(location, activeUnitId);
   // ── WORKPLACE (A BUSINESS INSIDE THE PROPERTY) ──
@@ -680,14 +675,9 @@ export default function Scene() {
     .filter((n) => isSelectableParticipantAtZone(characters.find((c) => c.id === n.id) || n, location, activeZone || locationZones[0]?.zone_name));
 
   // ── IMAGE GENERATION HOOK ──
-  // Identity authority chain:
-  //   participant ID → avatar (the ONLY visual identity image)
-  //   + Appearance Lock reinforcement → participant binding → Closet → composition
-  // The avatar is the main established image — always included, NOT a fallback.
-  // Original reference photos are never passed; they exist only to create the avatar.
-  // The scene's own transcript goes to the picture: what its people have already said, and
-  // what has been narrated, is the record of their current physical state — so an image can
-  // never contradict an action the scene has already established.
+  // Identity authority: participant ID → avatar (the only visual identity image, never a
+  // fallback) + Appearance Lock. The scene's transcript goes to the picture, so an image
+  // never contradicts an action the scene has already established.
   const { sceneImage, setSceneImage, isGeneratingImage, generateSceneImage } = useSceneImageGenerator({ transcript: messages });
 
   useEffect(() => {
@@ -1243,7 +1233,9 @@ export default function Scene() {
     // shown as their line and remembered by them as something they said.
     const priorLine = appendVoicedLine(speaker, spoken);
 
-    const responders = priorLine ? cast.filter((c) => c.id !== priorLine.characterId) : cast;
+    // A sleeping character does not answer, react or take part in the conversation. Nobody
+    // else is ever given their lines, and the beat simply has no one to answer it.
+    const responders = (priorLine ? cast.filter((c) => c.id !== priorLine.characterId) : cast).filter((c) => !isSleepingCharacter(c));
     // A character who is alone still speaks for themselves: the line is recorded as
     // theirs, and no exchange is invented around it.
     if (responders.length === 0) {
@@ -1547,7 +1539,9 @@ export default function Scene() {
       // INFANTS ARE PRESENT, NOT CONVERSATIONAL: age 0 is a newborn — physically in
       // the scene, never capable of speech or an adult conversational response.
       const infantCharacters = dialogueEligible.filter((c) => isInfantCharacter(c));
-      const speakingEligible = dialogueEligible.filter((c) => !isInfantCharacter(c));
+      // Someone asleep is here but not conversational: they never answer, initiate or react,
+      // and their words are never put in anyone else's mouth.
+      const speakingEligible = dialogueEligible.filter((c) => !isInfantCharacter(c) && !isSleepingCharacter(c));
       const charSummaries = speakingEligible.map((c) => `${c.name} (${c.personality_summary?.split(".")[0] || c.archetype || "character"}, mood: ${c.emotional_state || "calm"})`).join("; ");
       const eligibleKnownChars = speakingEligible.filter((c) => !c.isNpc);
       const eligibleNpcList = speakingEligible.filter((c) => c.isNpc).map((n) => `${n.name} (${n.role || "NPC"}${n.personality_summary ? ", " + n.personality_summary.split(".")[0] : ""})`).join(", ");
@@ -2353,7 +2347,14 @@ export default function Scene() {
         inRide={!!ride}
         onArriveAtDestination={handleArriveAtDestination}
         rideDestinationName={ride?.spaceLabel || ride?.destination?.name || null}
+        onCharacterCommand={setCommandAction}
       />
+
+      {/* Go to Sleep / Wake Up / Go Home / Go to Work — asks who, then runs the existing
+          sleep, presence and workplace authority for exactly those people. */}
+      <SceneCharacterCommands command={commandAction} onClose={() => setCommandAction(null)}
+        candidates={observeMode ? observeActors : activityActors} locationMap={locationMap}
+        currentUser={currentUser} setMessages={setMessages} queryClient={queryClient} />
 
       {ride && <SceneRideBar ride={ride} />}{spawnNpcModal}
 

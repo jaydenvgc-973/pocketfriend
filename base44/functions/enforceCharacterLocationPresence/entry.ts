@@ -692,6 +692,45 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime, 
     if (!sleepHomeId) {
       return { disposition: 'deferred', canonicalFields: {}, reason: 'no_valid_sleep_location' };
     }
+    // ── RESIDENTIAL CIRCUMSTANCE — A PLACE SOMEONE ELSE LIVES IS NOT THEIR BED ─────
+    // A place that is physically sleep-able is not thereby this character's sleeping
+    // place. An Unhoused Living Space (an encampment, an underpass, a shelter built on the
+    // street) belongs to the people who actually live there. A character who has an
+    // established residence does not adopt it as an overnight destination: substantial
+    // sleep sends them to their own home through the existing redirect. Their own home, a
+    // hotel, a shelter, another person's home and their own established living space are
+    // untouched, and an incidental nap where they already are stays possible.
+    const establishedSleepHomeId = resolveValidSleepLocationId(character, locationMap);
+    if (
+      requestedStatus === 'sleeping'
+      && establishedSleepHomeId
+      && sleepHomeId !== establishedSleepHomeId
+      && (locationMap[sleepHomeId]?.subtype || []).includes('unhoused_living_space')
+    ) {
+      const ownHomeLoc = locationMap[establishedSleepHomeId];
+      return {
+        disposition: 'redirected',
+        canonicalFields: {
+          resolved_current_location_id: establishedSleepHomeId,
+          resolved_current_location_name: ownHomeLoc?.name || 'Home',
+          resolved_location_type: 'home',
+          resolved_presence_status: 'home',
+          resolved_source_reason: 'sleep_redirected_to_own_residence',
+          resolved_last_updated_at: new Date().toISOString(),
+        },
+        committed_result: {
+          resolved_current_location_id: establishedSleepHomeId,
+          resolved_current_location_name: ownHomeLoc?.name || 'Home',
+          resolved_location_type: 'home',
+          resolved_presence_status: 'home',
+          resolved_source_reason: 'sleep_redirected_to_own_residence',
+          redirect_reason: 'sleep_belongs_at_own_residence',
+        },
+        // Signal to the caller that sleep must be resubmitted after arriving home.
+        must_resubmit_sleep: true,
+      };
+    }
+
     const sleepHomeLoc = locationMap[sleepHomeId];
     if (!isValidSleepLocation(sleepHomeLoc)) {
       // Requested location is not a valid sleep location — redirect to valid sleep home

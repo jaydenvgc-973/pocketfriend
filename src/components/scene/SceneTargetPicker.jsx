@@ -28,6 +28,9 @@ export default function SceneTargetPicker({
   selectedIds = [],
   onConfirm = null,
   confirmLabel = "Do it together",
+  // Why someone here cannot do this right now (for example no assigned employment).
+  // The person stays listed so nothing is hidden; the reason is shown instead.
+  unavailable = null,
 }) {
   const [picked, setPicked] = useState(selectedIds || []);
   if (!action) return null;
@@ -86,11 +89,13 @@ export default function SceneTargetPicker({
             ) : (
               targets.map((person) => {
                 const isPicked = picked.includes(person.id);
+                const why = unavailable?.[person.id] || null;
                 return (
                   <button
                     key={person.id}
-                    onClick={() => (multiple ? toggle(person) : onSelect?.(person))}
-                    className={`w-full flex items-center gap-3 px-4 py-2.5 transition-colors text-left ${isPicked ? "bg-primary/10" : "hover:bg-secondary"}`}
+                    onClick={() => { if (!why) (multiple ? toggle(person) : onSelect?.(person)); }}
+                    disabled={!!why}
+                    className={`w-full flex items-center gap-3 px-4 py-2.5 transition-colors text-left ${why ? "opacity-60 cursor-not-allowed" : isPicked ? "bg-primary/10" : "hover:bg-secondary"}`}
                   >
                     <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center overflow-hidden flex-shrink-0">
                       {person.avatar_url
@@ -98,7 +103,10 @@ export default function SceneTargetPicker({
                         : <span className="text-xs font-bold text-foreground">{person.name?.[0]}</span>
                       }
                     </div>
-                    <p className={`flex-1 min-w-0 text-sm font-medium truncate ${isPicked ? "text-primary" : "text-foreground"}`}>{person.name}</p>
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-sm font-medium truncate ${isPicked ? "text-primary" : "text-foreground"}`}>{person.name}</p>
+                      {why && <p className="text-[10px] text-amber-400/90 truncate">{why}</p>}
+                    </div>
                     {multiple
                       ? (isPicked
                         ? <span className="w-5 h-5 rounded-full bg-primary flex items-center justify-center flex-shrink-0"><Check className="w-3 h-3 text-primary-foreground" /></span>

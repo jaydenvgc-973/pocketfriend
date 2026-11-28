@@ -137,6 +137,33 @@ export default function SceneActionStrip({
     stripRef.current?.scrollTo({ left: 0, behavior: "smooth" });
   };
 
+  // Go to Sleep and Wake Up sit together in Life Needs; Go Home and Go to Work sit together
+  // in General. Same card as every activity in the strip, same selector — they are part of
+  // the strip, not a separate toolbar.
+  const CHARACTER_COMMANDS = {
+    needs: [
+      { type: "sleep", label: "Go to Sleep", emoji: "😴" },
+      { type: "wake", label: "Wake Up", emoji: "☀️" },
+    ],
+    general: [
+      { type: "home", label: "Go Home", emoji: "🏠" },
+      { type: "work", label: "Go to Work", emoji: "💼" },
+    ],
+  };
+
+  const renderCommand = (cmd) => (
+    <button
+      key={`command_${cmd.type}`}
+      onClick={() => onCharacterCommand?.(cmd.type)}
+      disabled={actionCooldown}
+      title={cmd.label}
+      className={`flex flex-col items-center justify-center gap-0.5 p-1 w-[54px] min-w-[54px] md:gap-1 md:p-1.5 md:w-[78px] md:min-w-[78px] rounded-xl border transition-all text-center flex-shrink-0 snap-center ${actionCooldown ? "opacity-40 cursor-not-allowed" : "bg-secondary border-border hover:border-primary/30"}`}
+    >
+      <span className="text-base leading-none">{cmd.emoji}</span>
+      <span className="w-full text-[9px] text-foreground font-medium leading-tight whitespace-normal break-words text-center">{cmd.label}</span>
+    </button>
+  );
+
   const renderFolder = (folder) => {
     const open = folderIsOpen(folder.key);
     return (
@@ -194,6 +221,11 @@ export default function SceneActionStrip({
             )}
           </React.Fragment>
         )}
+        {/* Go Home and Go to Work sit with the general activities. A moving car is not a
+            reason to send anyone home, so they are not offered mid-ride. */}
+        {open && folder.key === "general" && !inRide && CHARACTER_COMMANDS.general.map(renderCommand)}
+        {/* Go to Sleep and Wake Up lead the Life Needs activities. */}
+        {open && folder.key === "needs" && CHARACTER_COMMANDS.needs.map(renderCommand)}
         {open && items.map(renderItem)}
         {/* Arrest is the last general activity, after Call the Cops. A car is not a venue:
             custody is not something this scene can carry out. */}
@@ -203,7 +235,7 @@ export default function SceneActionStrip({
             arrestDisabled={arrestTargets.length === 0 || actionCooldown}
           />
         )}
-        {open && folder.key !== "general" && items.length === 0 && (
+        {open && folder.key !== "general" && items.length === 0 && (CHARACTER_COMMANDS[folder.key] || []).length === 0 && (
           <span className="flex items-center justify-center px-2 text-[9px] text-muted-foreground/60 whitespace-nowrap flex-shrink-0">
             No {folder.label} activities here
           </span>
