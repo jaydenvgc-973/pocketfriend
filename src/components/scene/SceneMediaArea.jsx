@@ -5,6 +5,36 @@ import WatchVideoPanel from "@/components/scene/WatchVideoPanel";
 import SceneImageNotice from "@/components/scene/SceneImageNotice";
 import { Car } from "lucide-react";
 import { carLabel } from "@/lib/ownerBelongings";
+import { getUnitById, getUnitZoneName } from "@/lib/residentialUnits";
+import { getWorkplaceById } from "@/lib/locationWorkspaces";
+import { getActiveSceneSpaceId } from "@/lib/activeSceneSpace";
+
+/**
+ * The zones offered for the space chosen in the space dropdown beneath the picture.
+ *
+ * Read only from the assignments Places already stores on that space — a residence's or
+ * living space's own zone_names (its primary zone_name when it has no list), a business's
+ * own zone_names. Names are matched exactly, so a shared zone stays available for every
+ * space it was assigned to and a similar-sounding name is never borrowed. The whole
+ * facility keeps every zone of the property. A space that carries no zone assignment of
+ * its own — a hospital room, a cell, an apartment whose rooms were never assigned — keeps
+ * exactly the list it has today, so no existing option is removed.
+ */
+function zonesForSpace(location, zones, spaceId) {
+  if (!location || !spaceId) return zones;
+  const workspace = getWorkplaceById(location, spaceId);
+  let assigned = workspace ? workspace.zone_names || [] : null;
+  if (!workspace) {
+    const unit = getUnitById(location, spaceId);
+    if (!unit) return zones;
+    // Its own rooms, plus the established room this kind of space is shown through
+    // (a Patient Room, a Cell, a dorm room) — the same zone the page already selects.
+    assigned = [...(unit.zone_names || []), unit.zone_name, getUnitZoneName(location, spaceId)];
+  }
+  const owned = new Set((assigned || []).filter(Boolean));
+  if (owned.size === 0) return zones;
+  return zones.filter((z) => z?.zone_name && owned.has(z.zone_name));
+}
 
 const CATEGORY_EMOJIS = {
   home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
@@ -57,6 +87,9 @@ export default function SceneMediaArea({
 }) {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [showZonePicker, setShowZonePicker] = useState(false);
+
+  // The space dropdown beneath the picture decides which zones this dropdown offers.
+  const zoneList = zonesForSpace(location, locationZones, getActiveSceneSpaceId());
 
   const currentZoneForAction = locationZones.find((z) => z.zone_name === activeZone) || locationZones[0];
 
@@ -136,14 +169,14 @@ export default function SceneMediaArea({
       ) : null}
 
       {/* Zone picker */}
-      {!ride && locationZones.length > 1 && (
+      {!ride && zoneList.length > 1 && (
         <div className="absolute top-2 left-2 z-[200]">
           <button
             onClick={() => setShowZonePicker((v) => !v)}
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-black/50 text-white text-xs font-medium hover:bg-black/70 transition-colors"
           >
             <MapPin className="w-3 h-3" />
-            <span>{activeZone || locationZones[0]?.zone_name || "Zone"}</span>
+            <span>{activeZone || zoneList[0]?.zone_name || "Zone"}</span>
             <ChevronDown className={`w-3 h-3 transition-transform ${showZonePicker ? "rotate-180" : ""}`} />
           </button>
           <AnimatePresence>
@@ -158,7 +191,7 @@ export default function SceneMediaArea({
                 // reaches down over the conversation and the controls below it.
                 style={{ maxHeight: "min(288px, 45dvh)" }}
               >
-                {locationZones.map((zone) => (
+                {zoneList.map((zone) => (
                   <button
                     key={zone.zone_name}
                     onClick={() => { onZoneChange?.(zone.zone_name); setShowZonePicker(false); }}
