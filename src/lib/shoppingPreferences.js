@@ -16,7 +16,7 @@
 import { getActiveSceneSpaceId } from '@/lib/activeSceneSpace';
 import { getWorkplaceById } from '@/lib/locationWorkspaces';
 import { workplaceVenueSubtypes } from '@/lib/actionGenerator';
-import { merchandiseFamiliesForVenue, MERCHANDISE_FAMILIES, MERCHANDISE_FAMILY_LABELS } from '@/lib/venueMerchandise';
+import { merchandiseFamiliesForVenue, MERCHANDISE_FAMILIES, MERCHANDISE_FAMILY_LABELS, PET_TYPE_OPTIONS, VEHICLE_TYPE_OPTIONS } from '@/lib/venueMerchandise';
 import { OUTFIT_CATEGORIES } from '@/lib/outfitRotationEngine';
 
 function normalizeTypes(types) {
@@ -69,11 +69,15 @@ export function resolveShoppingDestination(location, spaceId = undefined) {
  *   families         — the store's own merchandise types, each an existing family.
  */
 export function shoppingSelectorsFor(destination) {
-  if (!destination) return { outfitCategories: [], families: [] };
+  if (!destination) return { outfitCategories: [], families: [], petTypes: [], vehicleTypes: [] };
   const sellsWearables = destination.families.some((f) => MERCHANDISE_FAMILIES[f]?.category === 'clothing');
   return {
     outfitCategories: sellsWearables ? OUTFIT_CATEGORIES : [],
     families: destination.families.map((f) => ({ key: f, label: MERCHANDISE_FAMILY_LABELS[f] || venueTypeLabel(f) })),
+    // A pet store asks what kind of animal; a dealership asks what kind of vehicle. Both
+    // describe the type being looked for — never a brand or a manufacturer.
+    petTypes: destination.families.includes('pets') ? PET_TYPE_OPTIONS : [],
+    vehicleTypes: destination.families.includes('vehicles') ? VEHICLE_TYPE_OPTIONS : [],
   };
 }
 
@@ -89,6 +93,8 @@ export function readShoppingPreferences(destinationKey) {
     return {
       categories: Array.isArray(parsed.categories) ? parsed.categories : [],
       families: Array.isArray(parsed.families) ? parsed.families : [],
+      petTypes: Array.isArray(parsed.petTypes) ? parsed.petTypes : [],
+      vehicleTypes: Array.isArray(parsed.vehicleTypes) ? parsed.vehicleTypes : [],
       note: typeof parsed.note === 'string' ? parsed.note : '',
     };
   } catch {
@@ -111,6 +117,8 @@ export function hasShoppingPreferences(preferences) {
   if (!preferences) return false;
   return (preferences.categories?.length || 0) > 0
     || (preferences.families?.length || 0) > 0
+    || (preferences.petTypes?.length || 0) > 0
+    || (preferences.vehicleTypes?.length || 0) > 0
     || !!String(preferences.note || '').trim();
 }
 
@@ -128,6 +136,14 @@ export function shoppingPreferenceSummary(preferences, destination) {
     const labels = preferences.families
       .map((f) => MERCHANDISE_FAMILY_LABELS[f] || venueTypeLabel(f));
     if (labels.length > 0) parts.push(`looking at: ${labels.join(', ')}`);
+  }
+  if (preferences.petTypes?.length > 0) {
+    const labels = preferences.petTypes.map((t) => PET_TYPE_OPTIONS.find((o) => o.value === t)?.label).filter(Boolean);
+    if (labels.length > 0) parts.push(`kind of animal: ${labels.join(', ')}`);
+  }
+  if (preferences.vehicleTypes?.length > 0) {
+    const labels = preferences.vehicleTypes.map((t) => VEHICLE_TYPE_OPTIONS.find((o) => o.value === t)?.label).filter(Boolean);
+    if (labels.length > 0) parts.push(`kind of vehicle: ${labels.join(', ')}`);
   }
   const note = String(preferences.note || '').trim();
   if (note) parts.push(`in their own words: "${note}"`);

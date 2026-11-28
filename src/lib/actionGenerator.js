@@ -544,6 +544,26 @@ const ACCESSORIES_STORE_ACTIONS = classifyAll([
   { id: "ask_help", label: "Ask for help", emoji: "🙋", cost: 0, type: "social", requires_staff: true },
 ]);
 
+// ── PET STORE ────────────────────────────────────────────────────────────────
+// Live animals are looked at, asked about and met in the store. Buying goes through the
+// same product card as every other store — there is no separate pet purchase system.
+const PET_STORE_ACTIONS = classifyAll([
+  { id: "pet_browse", label: "Look at the animals", emoji: "🐾", cost: 0, type: "observational", suggested_zone: "Sales Floor" },
+  { id: "pet_ask_care", label: "Ask about their care", emoji: "🙋", cost: 0, type: "social", requires_staff: true },
+  { id: "pet_play_area", label: "Step into the play area", emoji: "🧶", cost: 0, type: "functional", suggested_zone: "Sales Floor" },
+  { id: "ask_help", label: "Ask for help", emoji: "🙋", cost: 0, type: "social", requires_staff: true },
+]);
+
+// ── CAR DEALERSHIP ───────────────────────────────────────────────────────────
+// The lot is walked, the cars are looked at and staff are asked. Testing and buying happen
+// on the vehicle's own product card — never through the Take a Ride travel activity.
+const CAR_DEALERSHIP_ACTIONS = classifyAll([
+  { id: "car_look_around", label: "Look around the lot", emoji: "🚗", cost: 0, type: "observational", suggested_zone: "Showroom" },
+  { id: "car_ask_salesperson", label: "Talk to a salesperson", emoji: "🙋", cost: 0, type: "social", requires_staff: true },
+  { id: "car_ask_price", label: "Ask the price", emoji: "💰", cost: 0, type: "social", requires_staff: true },
+  { id: "ask_help", label: "Ask for help", emoji: "🙋", cost: 0, type: "social", requires_staff: true },
+]);
+
 // ── GENERAL RETAIL (bookstore, electronics, home goods, etc.) ─────────────────
 const RETAIL_STORE_ACTIONS = classifyAll([
   { id: "retail_browse", label: "Browse", emoji: "🛍️", cost: 0, type: "functional", suggested_zone: "Store Floor" },
@@ -666,6 +686,10 @@ const ACTION_LIBRARY_BY_SUBTYPE = {
   nail_salon:      SALON_ACTIONS,
   beauty_salon:    SALON_ACTIONS,
   hair_salon:      SALON_ACTIONS,
+  // Pet store and car dealership — their own venue libraries; shopping comes from the
+  // merchandise families these types carry.
+  pet_store:             PET_STORE_ACTIONS,
+  car_dealership:        CAR_DEALERSHIP_ACTIONS,
   // Clothing
   clothing:              CLOTHING_STORE_ACTIONS,
   boutique:              CLOTHING_STORE_ACTIONS,
@@ -820,6 +844,10 @@ const SHOPPING_ACTION_BY_FAMILY = {
   electronics: { id: 'buy_electronics', label: 'Buy Electronics', emoji: '🎧', cost: 60 },
   toys:        { id: 'buy_toys',        label: 'Buy Toys',        emoji: '🧸', cost: 25 },
   gifts:       { id: 'buy_gifts',       label: 'Buy Gifts',       emoji: '🎁', cost: 30 },
+  // Live animals and vehicles. The price is the offer's own; nothing is bought until the
+  // product card is confirmed through the existing purchase modal.
+  pets:        { id: 'find_pet',        label: 'Find Pet',        emoji: '🐾', cost: 350 },
+  vehicles:    { id: 'find_vehicle',    label: 'Find Vehicle',    emoji: '🚗', cost: 9500 },
 };
 
 /** A retail purchase action (a complete outfit keeps its own established action). */

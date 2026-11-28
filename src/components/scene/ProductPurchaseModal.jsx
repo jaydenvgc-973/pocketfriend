@@ -2,8 +2,10 @@ import React, { useState, useRef, useEffect } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Loader2, Check, User, Search } from "lucide-react";
+import { X, Loader2, Check, User, Search, PawPrint, Car } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import CarBelongingsEditor from "@/components/property/CarBelongingsEditor";
+import { loadBelongings, saveBelongings } from "@/lib/ownerBelongings";
 import {
   buildRecipient,
   buildPurchasedPiece,
@@ -55,6 +57,8 @@ export default function ProductPurchaseModal({
   // The individual who chose to perform the shopping activity. They are the payer offered
   // first; the selection stays editable and the recipient is a separate choice.
   defaultPayerId = null,
+  // A pet or a vehicle carries its own established details from the product card.
+  item_details = null,
 }) {
   const queryClient = useQueryClient();
   const [isProcessing, setIsProcessing] = useState(false);
@@ -109,14 +113,41 @@ export default function ProductPurchaseModal({
   }, [payerId, payerCandidates.map((c) => c.id).join(","), userPresent]);
 
   const isOutfit = item_kind === "outfit";
+  // A pet and a vehicle are bought through this same modal, but they are never worn: they
+  // are registered under the recipient's existing Property / Belongings.
+  const isPet = item_category === "pet";
+  const isVehicle = item_category === "vehicle";
+  const isProperty = isPet || isVehicle;
   // Non-wearable merchandise (home goods, records, books…) is bought, never closeted.
-  const producesClosetEntry = isOutfit || item_wearable !== false;
+  const producesClosetEntry = !isProperty && (isOutfit || item_wearable !== false);
   const canAfford = typeof userBalance === "number" && userBalance >= price;
   const blocked = !chosenRecipientId || (!paidPurchase && !payerIsCharacter && !canAfford);
 
   const filteredRecipients = recipientQuery.trim()
     ? recipientOptions.filter((c) => c.name?.toLowerCase().includes(recipientQuery.trim().toLowerCase()))
     : recipientOptions;
+
+  // A pet is named by whoever receives it; a vehicle's four references are prepared here,
+  // through the same editor Property / Belongings already uses. Nothing is generated or
+  // charged until the user presses it.
+  const [petName, setPetName] = useState("");
+  const [carDraft, setCarDraft] = useState(null);
+  useEffect(() => {
+    if (!isOpen || !isVehicle) { setCarDraft(null); return; }
+    const d = item_details || {};
+    setCarDraft({
+      label: [d.manufacturer || d.make, d.model].filter(Boolean).join(" ") || item_label || "",
+      color: d.exterior_color || "",
+      description: [d.year, String(d.vehicle_type || "").replace(/_/g, " "), d.interior_color].filter(Boolean).join(", "),
+      views: {
+        // The showroom photograph IS this vehicle's exterior, and a test drive's own picture
+        // is the starting point for the driver's seat view. Neither is drawn again here.
+        exterior: preview_image_url || "",
+        ...(d.test_image_url ? { driver_seat: d.test_image_url } : {}),
+      },
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, isVehicle, preview_image_url, item_details?.test_image_url]);
 
   // The preview shows the recipient wearing what is being bought — not a flat product
   // shot. Regenerated whenever the recipient changes, before anything is charged.
@@ -155,11 +186,28 @@ export default function ProductPurchaseModal({
     setRecipientId(null);
     setRecipientQuery("");
     setPayerId(defaultPayerId || "user");
+    setPetName("");
     rememberPaidPurchase(null);
   };
 
   /** Save the paid purchase into the recipient's existing closet — never charges. */
   const savePaidPurchase = async (purchase) => {
+    // A bought pet or vehicle is registered in the recipient's Property / Belongings, in the
+    // same record that section already owns. Updating that record can never duplicate it.
+    if (purchase.patch) {
+      const ownerType = purchase.recipient.kind === "character" ? "character" : "user";
+      const existing = await loadBelongings(currentUser?.email, ownerType, purchase.recipient.id);
+      await saveBelongings({
+        existing,
+        ownerType,
+        ownerId: purchase.recipient.id,
+        ownerEmail: currentUser?.email,
+        ownerName: purchase.recipient.name,
+        patch: purchase.patch,
+      });
+      queryClient.invalidateQueries({ queryKey: ["ownerBelongings"] });
+      queryClient.invalidateQueries({ queryKey: ["characters"] });
+    }
     if (purchase.entry) {
       await appendClosetEntry({ recipient: purchase.recipient, entry: purchase.entry });
       queryClient.invalidateQueries({ queryKey: ["userSettings"] });
@@ -216,6 +264,30 @@ export default function ProductPurchaseModal({
         displayName: currentUser?.full_name || "You",
       });
       const transactionId = result?.data?.transaction_id || null;
+      const details = item_details || {};
+      // The exact animal or vehicle that was shown is the one registered: the card's own
+      // photograph becomes the pet's image and the vehicle's exterior reference, and a test
+      // drive's picture becomes the driver's seat reference.
+      const patch = isPet
+        ? {
+            pet: {
+              pet_type: details.pet_type || "other",
+              pet_type_custom: details.pet_type_custom || "",
+              name: petName.trim(),
+              image_url: preview_image_url || "",
+              notes: details.description || "",
+            },
+          }
+        : isVehicle
+          ? {
+              car: {
+                label: carDraft?.label || item_label || "",
+                color: carDraft?.color || details.exterior_color || "",
+                description: carDraft?.description || "",
+                views: carDraft?.views || { exterior: preview_image_url || "" },
+              },
+            }
+          : null;
       const entry = !producesClosetEntry
         ? null
         : recipient.kind === "character"
@@ -227,7 +299,8 @@ export default function ProductPurchaseModal({
       const paid = {
         recipient,
         entry,
-        kind: isOutfit ? "outfit" : "item",
+        patch,
+        kind: isPet ? "pet" : isVehicle ? "vehicle" : isOutfit ? "outfit" : "item",
         price,
         itemLabel: item_label || null,
         transactionId,
@@ -283,7 +356,7 @@ export default function ProductPurchaseModal({
             className="w-full bg-card rounded-t-3xl border-t border-border p-4 space-y-4 max-h-[88vh] overflow-y-auto"
           >
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-foreground">{isOutfit ? "Buy Outfit" : "Purchase Item"}</h3>
+              <h3 className="text-sm font-semibold text-foreground">{isPet ? "Buy This Pet" : isVehicle ? "Buy This Vehicle" : isOutfit ? "Buy Outfit" : "Purchase Item"}</h3>
               <button onClick={handleClose} disabled={isProcessing} className="text-muted-foreground hover:text-foreground">
                 <X className="w-4 h-4" />
               </button>
@@ -295,7 +368,7 @@ export default function ProductPurchaseModal({
                 <div className="w-full h-56 rounded-lg bg-primary/10 flex items-center justify-center overflow-hidden relative">
                   {entryImageUrl
                     ? <img src={entryImageUrl} alt={item_label || "Purchase"} className="w-full h-full object-cover" />
-                    : <span className="text-4xl">🛍️</span>
+                    : <span className="text-4xl">{isPet ? "🐾" : isVehicle ? "🚗" : "🛍️"}</span>
                   }
                   {isGeneratingPreview && (
                     <div className="absolute inset-0 bg-background/75 flex flex-col items-center justify-center gap-2">
@@ -312,9 +385,13 @@ export default function ProductPurchaseModal({
                     <p className="text-xl font-bold text-foreground">${price}</p>
                   </div>
                   <p className="text-[10px] text-muted-foreground">
-                    {producesClosetEntry
-                      ? `Worn by ${recipientIsUser || !chosenCharacter ? "you" : chosenCharacter.name} — goes to the ${isOutfit ? "Outfits" : "Items"} section of their closet`
-                      : "Kept as a purchase — not added to a closet"}
+                    {isPet
+                      ? `Registered as ${recipientIsUser || !chosenCharacter ? "your" : `${chosenCharacter.name}'s`} pet in Property & Belongings`
+                      : isVehicle
+                        ? `Registered as ${recipientIsUser || !chosenCharacter ? "your" : `${chosenCharacter.name}'s`} vehicle in Property & Belongings`
+                        : producesClosetEntry
+                          ? `Worn by ${recipientIsUser || !chosenCharacter ? "you" : chosenCharacter.name} — goes to the ${isOutfit ? "Outfits" : "Items"} section of their closet`
+                          : "Kept as a purchase — not added to a closet"}
                   </p>
                   {previewError && <p className="text-[10px] text-amber-400 mt-1">{previewError}</p>}
                 </div>
@@ -322,6 +399,30 @@ export default function ProductPurchaseModal({
 
               {error && (
                 <p className="text-xs text-destructive bg-destructive/10 rounded-lg px-3 py-2">{error}</p>
+              )}
+
+              {/* The animal is named by whoever receives them — optional, as in Property / Belongings. */}
+              {isPet && (
+                <div className="space-y-1">
+                  <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5"><PawPrint className="w-3.5 h-3.5" /> Name (optional)</p>
+                  <Input
+                    value={petName}
+                    onChange={(e) => setPetName(e.target.value)}
+                    placeholder={item_details?.breed || "What will they be called?"}
+                    className="h-8 text-xs rounded-xl"
+                    disabled={isProcessing || !!paidPurchase}
+                  />
+                </div>
+              )}
+
+              {/* The vehicle's four references, prepared with the same editor Property / Belongings
+                  uses. Generating one never buys anything and never charges the price. */}
+              {isVehicle && carDraft && (
+                <div className="rounded-xl border border-border bg-secondary/30 p-2 space-y-1">
+                  <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5"><Car className="w-3.5 h-3.5" /> Vehicle references</p>
+                  <CarBelongingsEditor car={carDraft} onChange={setCarDraft} />
+                  <p className="text-[10px] text-muted-foreground">All four views must show this same vehicle. The showroom photo is its exterior.</p>
+                </div>
               )}
 
               {/* Recipient — whose it becomes, present or not */}

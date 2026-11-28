@@ -207,6 +207,13 @@ async function loadOwnerCloset(recipient) {
  */
 export function purchaseConfirmationLine({ recipient, entry, kind, price, itemLabel }) {
   const who = recipient?.kind === "character" ? recipient.name : null;
+  // A pet or a vehicle is not a closet entry: it is registered under Property / Belongings.
+  if (kind === "pet" || kind === "vehicle") {
+    const what = itemLabel || (kind === "pet" ? "The pet" : "The vehicle");
+    return who
+      ? `✓ Purchased for $${price} — ${what} is now registered in ${who}'s Property & Belongings.`
+      : `✓ Purchased for $${price} — ${what} is now registered in your Property & Belongings.`;
+  }
   if (!entry) {
     const what = itemLabel || "The item";
     return who ? `✓ Purchased for $${price} — ${what} is ${who}'s.` : `✓ Purchased for $${price} — ${what} is yours.`;

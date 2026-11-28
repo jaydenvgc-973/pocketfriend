@@ -154,7 +154,135 @@ export const MERCHANDISE_FAMILIES = {
     wearable: false,
     pool: ["Scented Candle", "Gift Basket", "Ceramic Mug Set", "Photo Frame"],
   },
+  // A pet store sells live animals and a dealership sells vehicles. Neither is clothing:
+  // both are bought through the same product card and transaction, and registered under
+  // Property / Belongings rather than a closet. Their offers are built by the generators
+  // below, so the pool here stays empty.
+  pets: { category: "pet", wearable: false, pool: [] },
+  vehicles: { category: "vehicle", wearable: false, pool: [] },
 };
+
+/**
+ * The pet types a pet store's visit can be aimed at. These are preferences, not the
+ * registration record: the existing Property / Belongings pet fields still record what
+ * the animal actually is once it is bought.
+ */
+export const PET_TYPE_OPTIONS = [
+  { value: "dog", label: "Dog" },
+  { value: "cat", label: "Cat" },
+  { value: "bird", label: "Bird" },
+  { value: "fish", label: "Fish" },
+  { value: "reptile", label: "Reptile" },
+  { value: "small_mammal", label: "Small Mammal" },
+  { value: "other", label: "Other" },
+];
+
+/**
+ * The vehicle types a dealership visit can be aimed at. It describes the kind of vehicle,
+ * never a manufacturer: the shopper names a make, model or colour in their own words.
+ */
+export const VEHICLE_TYPE_OPTIONS = [
+  { value: "sedan", label: "Sedan" },
+  { value: "suv", label: "SUV" },
+  { value: "coupe", label: "Coupe" },
+  { value: "convertible", label: "Convertible" },
+  { value: "hatchback", label: "Hatchback" },
+  { value: "pickup_truck", label: "Pickup Truck" },
+  { value: "van_minivan", label: "Van / Minivan" },
+  { value: "sports_car", label: "Sports Car" },
+  { value: "other", label: "Other" },
+];
+
+/** Representative animals a pet store actually has, by the pet type they belong to. */
+const PET_BREEDS = {
+  dog: ["Golden Retriever puppy", "Labrador Retriever puppy", "French Bulldog", "Beagle", "Pembroke Welsh Corgi", "German Shepherd puppy", "Poodle", "Shih Tzu", "Border Collie puppy", "Dachshund"],
+  cat: ["Tabby kitten", "Maine Coon kitten", "Siamese kitten", "Ragdoll kitten", "Black domestic shorthair", "Orange tabby"],
+  bird: ["Cockatiel", "Budgie", "Lovebird", "African Grey Parrot"],
+  fish: ["Betta fish", "Goldfish", "Guppy", "Angelfish"],
+  reptile: ["Bearded Dragon", "Leopard Gecko", "Corn Snake", "Ball Python"],
+  small_mammal: ["Holland Lop rabbit", "Guinea pig", "Syrian hamster", "Ferret"],
+  other: ["Hedgehog", "Chinchilla", "Sugar Glider"],
+};
+
+/** The existing Property / Belongings pet_type a species is recorded as. */
+const PET_RECORD_TYPE = {
+  dog: "dog",
+  cat: "cat",
+  bird: "bird",
+  fish: "fish",
+  reptile: "reptile",
+};
+
+/** Representative vehicles of each type, as make + model. */
+const VEHICLE_MODELS = {
+  sedan: [["Honda", "Accord"], ["Toyota", "Camry"], ["Nissan", "Altima"], ["Hyundai", "Sonata"], ["Tesla", "Model 3"]],
+  suv: [["Toyota", "RAV4"], ["Honda", "CR-V"], ["Jeep", "Grand Cherokee"], ["Ford", "Explorer"], ["Subaru", "Outback"]],
+  coupe: [["Honda", "Civic Coupe"], ["BMW", "430i"], ["Ford", "Mustang"], ["Chevrolet", "Camaro"]],
+  convertible: [["Mazda", "MX-5 Miata"], ["BMW", "Z4"], ["Ford", "Mustang Convertible"], ["Audi", "A5 Cabriolet"]],
+  hatchback: [["Volkswagen", "Golf"], ["Honda", "Fit"], ["Toyota", "Corolla Hatchback"], ["Mini", "Cooper"]],
+  pickup_truck: [["Ford", "F-150"], ["Chevrolet", "Silverado"], ["Toyota", "Tacoma"], ["Ram", "1500"]],
+  van_minivan: [["Honda", "Odyssey"], ["Toyota", "Sienna"], ["Chrysler", "Pacifica"], ["Ford", "Transit"]],
+  sports_car: [["Porsche", "911"], ["Chevrolet", "Corvette"], ["Nissan", "GT-R"], ["BMW", "M4"]],
+  other: [["Subaru", "Crosstrek"], ["Volvo", "V60"], ["Kia", "Telluride"]],
+};
+
+const VEHICLE_COLORS = ["black", "white", "silver", "gray", "dark blue", "red", "green", "beige"];
+const VEHICLE_INTERIORS = ["black leather", "tan leather", "gray cloth", "beige leather", "black cloth"];
+
+const pickFrom = (list) => list[Math.floor(Math.random() * list.length)];
+
+/**
+ * A pet offered by a pet store. The shopper's chosen pet types decide which animals can be
+ * offered; their own words describe what they are looking for and are carried with the
+ * offer (and into the picture), never turned into the animal's name.
+ */
+export function pickPetOffer(preferences = null) {
+  const chosen = (preferences?.petTypes || []).filter((t) => PET_BREEDS[t]);
+  const type = chosen.length > 0 ? pickFrom(chosen) : pickFrom(Object.keys(PET_BREEDS));
+  const breed = pickFrom(PET_BREEDS[type]);
+  return {
+    family: "pets",
+    label: breed,
+    category: "pet",
+    wearable: false,
+    details: {
+      pet_type: PET_RECORD_TYPE[type] || "other",
+      pet_type_custom: PET_RECORD_TYPE[type] ? "" : breed,
+      species: type,
+      breed,
+      description: String(preferences?.note || "").trim(),
+    },
+  };
+}
+
+/**
+ * A vehicle offered by a dealership. The shopper's chosen vehicle types decide the kind of
+ * vehicle; the make, model, year and colours belong to the offered vehicle itself and stay
+ * with it through Test, the reference images and the registration.
+ */
+export function pickVehicleOffer(preferences = null) {
+  const chosen = (preferences?.vehicleTypes || []).filter((t) => VEHICLE_MODELS[t]);
+  const type = chosen.length > 0 ? pickFrom(chosen) : pickFrom(Object.keys(VEHICLE_MODELS));
+  const [make, model] = pickFrom(VEHICLE_MODELS[type]);
+  const year = 2019 + Math.floor(Math.random() * 7);
+  const exterior = pickFrom(VEHICLE_COLORS);
+  return {
+    family: "vehicles",
+    label: `${year} ${make} ${model}`,
+    category: "vehicle",
+    wearable: false,
+    details: {
+      vehicle_type: type,
+      manufacturer: make,
+      make,
+      model,
+      year,
+      exterior_color: exterior,
+      interior_color: pickFrom(VEHICLE_INTERIORS),
+      description: String(preferences?.note || "").trim(),
+    },
+  };
+}
 
 /** A readable name for each existing merchandise family. */
 export const MERCHANDISE_FAMILY_LABELS = {
@@ -169,6 +297,8 @@ export const MERCHANDISE_FAMILY_LABELS = {
   electronics: "Electronics",
   toys: "Toys",
   gifts: "Gifts",
+  pets: "Pets",
+  vehicles: "Vehicles",
 };
 
 /** Business venue type → the merchandise family it sells. */
@@ -202,6 +332,9 @@ export const VENUE_MERCHANDISE_FAMILY = {
   // Toys and gifts
   toy_store: "toys",
   gift_shop: "gifts",
+  // Live animals and vehicles — bought through the same card, registered under belongings.
+  pet_store: "pets",
+  car_dealership: "vehicles",
 };
 
 /**
@@ -256,6 +389,10 @@ export function pickMerchandise(families, preferences = null) {
   if (preferred.length > 0) keys = preferred;
 
   const family = keys[Math.floor(Math.random() * keys.length)];
+  // A pet or a vehicle is offered as an individual animal or an individual car, with its
+  // own established details — never as a generic label.
+  if (family === "pets") return pickPetOffer(preferences);
+  if (family === "vehicles") return pickVehicleOffer(preferences);
   const meta = MERCHANDISE_FAMILIES[family];
 
   // The shopper's own words describe the item they are looking for. When they gave none,

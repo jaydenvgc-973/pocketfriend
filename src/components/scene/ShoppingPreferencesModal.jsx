@@ -15,9 +15,11 @@ import { shoppingSelectorsFor, venueTypeLabel } from "@/lib/shoppingPreferences"
  * and the established outfit category list. Nothing is invented for a store.
  */
 export default function ShoppingPreferencesModal({ open, destination, preferences, onConfirm, onClose }) {
-  const { outfitCategories, families } = shoppingSelectorsFor(destination);
+  const { outfitCategories, families, petTypes, vehicleTypes } = shoppingSelectorsFor(destination);
   const [selectedCategories, setSelectedCategories] = useState([]);
   const [selectedFamilies, setSelectedFamilies] = useState([]);
+  const [selectedPetTypes, setSelectedPetTypes] = useState([]);
+  const [selectedVehicleTypes, setSelectedVehicleTypes] = useState([]);
   const [note, setNote] = useState("");
 
   // Reopening shows what was already confirmed for this destination.
@@ -25,6 +27,8 @@ export default function ShoppingPreferencesModal({ open, destination, preference
     if (!open) return;
     setSelectedCategories(preferences?.categories || []);
     setSelectedFamilies(preferences?.families || []);
+    setSelectedPetTypes(preferences?.petTypes || []);
+    setSelectedVehicleTypes(preferences?.vehicleTypes || []);
     setNote(preferences?.note || "");
   }, [open, destination?.key]);
 
@@ -33,7 +37,13 @@ export default function ShoppingPreferencesModal({ open, destination, preference
   };
 
   const confirm = () => {
-    onConfirm?.({ categories: selectedCategories, families: selectedFamilies, note: note.trim() });
+    onConfirm?.({
+      categories: selectedCategories,
+      families: selectedFamilies,
+      petTypes: selectedPetTypes,
+      vehicleTypes: selectedVehicleTypes,
+      note: note.trim(),
+    });
   };
 
   return (
@@ -124,6 +134,54 @@ export default function ShoppingPreferencesModal({ open, destination, preference
               </div>
             )}
 
+            {/* A pet store asks what kind of animal — the existing pet-type names. */}
+            {petTypes.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-xs text-muted-foreground uppercase tracking-wider">Kind of animal</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {petTypes.map((option) => {
+                    const active = selectedPetTypes.includes(option.value);
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => toggle(selectedPetTypes, setSelectedPetTypes, option.value)}
+                        className={`px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-colors ${active ? "bg-primary/10 border-primary/50 text-primary" : "bg-secondary border-border text-foreground hover:border-primary/30"}`}
+                      >
+                        {option.label}
+                        {active && <Check className="w-3 h-3 inline ml-1" />}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-[10px] text-muted-foreground/70">Pick as many as you like — or none to see what's there.</p>
+              </div>
+            )}
+
+            {/* A dealership asks what kind of vehicle — never a manufacturer. */}
+            {vehicleTypes.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-xs text-muted-foreground uppercase tracking-wider">Kind of vehicle</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {vehicleTypes.map((option) => {
+                    const active = selectedVehicleTypes.includes(option.value);
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => toggle(selectedVehicleTypes, setSelectedVehicleTypes, option.value)}
+                        className={`px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-colors ${active ? "bg-primary/10 border-primary/50 text-primary" : "bg-secondary border-border text-foreground hover:border-primary/30"}`}
+                      >
+                        {option.label}
+                        {active && <Check className="w-3 h-3 inline ml-1" />}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-[10px] text-muted-foreground/70">A make, model or colour goes in your own words below.</p>
+              </div>
+            )}
+
             <div className="space-y-1">
               <label className="text-xs text-muted-foreground uppercase tracking-wider block">Additional information (optional)</label>
               <textarea
@@ -143,7 +201,7 @@ export default function ShoppingPreferencesModal({ open, destination, preference
                 <Check className="w-4 h-4" /> Confirm
               </button>
               <button
-                onClick={() => { setSelectedCategories([]); setSelectedFamilies([]); setNote(""); }}
+                onClick={() => { setSelectedCategories([]); setSelectedFamilies([]); setSelectedPetTypes([]); setSelectedVehicleTypes([]); setNote(""); }}
                 className="px-3 py-2 rounded-xl bg-secondary text-foreground text-xs font-medium hover:bg-secondary/80 transition-colors"
               >
                 Clear

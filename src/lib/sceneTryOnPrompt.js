@@ -22,6 +22,48 @@ export function isFootwearMerchandise(family) {
 }
 
 /**
+ * PLAY WITH — the chosen character with the exact animal from the product card.
+ * The interaction fits the species: a fish is watched in its aquarium, a reptile is
+ * observed and may rest on an open hand, a bird perches, a cat is played with on the
+ * floor, and a dog is held or played with. The store is never left.
+ */
+export function buildPetInteractionPrompt({ itemLabel, actorName, locationName, zoneName, details }) {
+  const actor = actorName || "the person";
+  const pet = itemLabel || "the animal";
+  const store = locationName || "the pet store";
+  const where = zoneName ? `the ${zoneName} at ${store}` : store;
+  const species = details?.species;
+
+  const moment = species === "fish"
+    ? `${actor} crouching in front of the aquarium at ${where}, watching the ${pet} swim, hands off the glass`
+    : species === "reptile"
+      ? `${actor} at ${where}, calmly observing the ${pet} in its terrarium and letting it rest on their open hand`
+      : species === "bird"
+        ? `${actor} beside the enclosure at ${where}, the ${pet} perched calmly on their hand`
+        : species === "cat"
+          ? `${actor} sitting on the floor at ${where}, playing with the ${pet} using a toy`
+          : `${actor} at ${where}, holding and playing with the ${pet}`;
+
+  return `${moment}. THE EXACT ANIMAL: the ${pet} is the same animal as the supplied photograph — identical breed, colouring, markings and size, never a different or similar animal. ${actor} keeps their own face, hair, body and identity exactly as in their reference image, and is still wearing their own current clothes. The picture is inside this shop — no other people in frame, no staff, no shoppers, no bystanders.`;
+}
+
+/**
+ * TEST — the chosen character with the exact vehicle from the product card. Sitting in it,
+ * adjusting the seat, looking over the dashboard, or a short drive around the dealership
+ * lot. This is a picture inside the shopping scene: nobody travels anywhere.
+ */
+export function buildVehicleTestPrompt({ itemLabel, actorName, locationName, zoneName, details }) {
+  const actor = actorName || "the person";
+  const car = itemLabel || "the vehicle";
+  const dealership = locationName || "the dealership";
+  const where = zoneName ? `the ${zoneName} at ${dealership}` : dealership;
+  const d = details || {};
+  const spec = [d.year, d.manufacturer || d.make, d.model, d.exterior_color, d.interior_color].filter(Boolean).join(" ");
+
+  return `${actor} in the driver's seat of the ${car} at ${where}, one hand on the steering wheel and the other adjusting the seat, looking over the dashboard and checking the mirrors. THE EXACT VEHICLE: the car is the same vehicle as the supplied photograph — identical body style, paint colour, trim and interior${spec ? ` (${spec})` : ""}, never a different or similar car. ${actor} keeps their own face, hair, body and identity exactly as in their reference image, and is still wearing their own current clothes. The car is on the dealership's own lot — not on a road, not in traffic, not at another place. No other people in frame.`;
+}
+
+/**
  * The existing zone of this store where this merchandise would be tried on.
  * Clothing prefers the store's fitting rooms, footwear its sales floor; when the store
  * has no such zone the scene's current zone is kept. A zone is never invented.

@@ -43,7 +43,7 @@ import { isOnSiteResidenceZone } from "@/lib/onsiteResidence";
 import { ACTION_IMAGE_PROMPTS, buildDirectedActionPrompt, HOUSEHOLD_ACTION_IDS, EATING_ACTION_IDS, SHOWER_ACTION_IDS, IN_WORLD_ACTIVITY_TEXT } from "@/lib/sceneActionConfig";
 import { getSceneInteractions, getTemporarySceneStaff } from "@/lib/sceneInteractionEngine";
 import { checkImageTrigger as _checkImageTrigger, isPurchaseOfferAction, presentOfferInWatchedScene } from "@/lib/sceneCheckImageTrigger";
-import { buildTryOnPrompt, resolveTryOnZone } from "@/lib/sceneTryOnPrompt";
+import { useSceneMerchandiseInteraction } from "@/hooks/useSceneMerchandiseInteraction";
 import { createImageParticipantSelector } from "@/lib/sceneImageParticipants";
 import { useSceneCharacters } from "@/hooks/useSceneCharacters";
 import SceneNpcRow from "@/components/scene/SceneNpcRow";
@@ -169,7 +169,7 @@ export default function Scene() {
   const [privateTarget, setPrivateTarget] = useState(null);
   const [pendingPurchase, setPendingPurchase] = useState(null);
   // Try On: the product card's own merchandise, waiting for the user to pick who wears it.
-  const [tryOnRequest, setTryOnRequest] = useState(null);
+  // tryOnRequest / handleTryOn come from useSceneMerchandiseInteraction below.
   // A paid purchase whose closet entry is being completed. The entry already exists in
   // the recipient's real closet — this only finishes its details.
   const [pendingClosetEntry, setPendingClosetEntry] = useState(null);
@@ -2175,59 +2175,17 @@ export default function Scene() {
     } finally { setActionCooldown(false); }
   };
 
-  // TRY ON — the product card's exact merchandise, worn by one chosen person in this scene.
-  // The picture is drawn by the existing top-Scenes image pathway, with the card's own image
-  // as the merchandise reference. Nothing is charged, no closet entry is created, and the
-  // card stays available so the same item can still be bought.
-  const handleTryOn = (msg, itemImageUrl) => {
-    if (!msg || !itemImageUrl) return;
-    const cast = observeMode ? observeCast : selectedPeopleHere;
-    if (cast.length > 0) {
-      setTryOnRequest({ msg, itemImageUrl, cast });
-      return;
-    }
-    // Nobody else is in the scene: the account holder tries it on themselves.
-    if (userParticipant && !observeMode) {
-      runTryOn({ msg, itemImageUrl }, { id: userParticipant.id, name: displayName });
-    }
-  };
-
-  const handleTryOnConfirm = (person) => {
-    const request = tryOnRequest;
-    setTryOnRequest(null);
-    if (request && person) runTryOn(request, person);
-  };
-
-  const runTryOn = (request, person) => {
-    const { msg, itemImageUrl } = request;
-    const merchandiseFamily = msg.item_merchandise || null;
-    // An existing zone of this store: its fitting rooms for clothing, its sales floor for
-    // footwear. No fitting-room location is ever created for this.
-    const zoneName = resolveTryOnZone(location, merchandiseFamily, activeZone || locationZones[0]?.zone_name);
-    const prompt = buildTryOnPrompt({
-      itemLabel: msg.item_label,
-      itemKind: msg.item_kind,
-      merchandiseFamily,
-      actorName: person.name,
-      locationName: location?.name,
-      zoneName,
-    });
-    generateSceneImage({
-      location, locationZones, activeZone: zoneName, sceneParticipants, userParticipant,
-      isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap,
-      actionOverridePrompt: prompt,
-      actionFocusIds: [person.id],
-      extraReferenceImages: [itemImageUrl],
-    });
-    // The scene remembers that they tried it on — an ordinary scene activity, not a purchase.
-    setMessages((prev) => [...prev, {
-      id: `try_on_${Date.now()}`,
-      sender: "activity",
-      emoji: "🪞",
-      content: `${person.name} tries on the ${msg.item_label || "item"}${zoneName ? ` in the ${zoneName}` : ""}.`,
-      timestamp: new Date().toISOString(),
-    }]);
-  };
+  // TRY ON, PLAY WITH and TEST — the product card's exact merchandise, with one chosen
+  // person in this scene. The picture is drawn by the existing top-Scenes image pathway,
+  // with the card's own image as the merchandise reference. Nothing is charged, no closet
+  // entry and no ownership is created, and the card stays available so it can still be bought.
+  const {
+    tryOnRequest, setTryOnRequest, handleTryOn, handlePlayWith, handleTestVehicle, handleTryOnConfirm,
+  } = useSceneMerchandiseInteraction({
+    observeMode, observeCast, selectedPeopleHere, userParticipant, displayName,
+    location, activeZone, locationZones, sceneParticipants, isHomeLocation, isRestrictedEnv,
+    firstImage, selectImageParticipants, characters, locationMap, generateSceneImage, setMessages,
+  });
 
   // Location-level closing only blocks when the SELECTED environment is also unavailable.
   // An accessible residential environment remains reachable while business operations are closed.
@@ -2294,7 +2252,7 @@ export default function Scene() {
       <ScenePresenceStrip observeMode={observeMode} displayName={displayName} currentUser={currentUser} observeCast={observeCast} traveledWithChars={traveledWithChars} selectedNpcs={selectedNpcs} extraNpcs={extraNpcs} location={location} locationUnits={locationUnits} locationWorkplaces={locationWorkplaces} activeUnitId={activeUnitId} onSelectUnit={handleUnitChange} />
 
       {/* Chat area */}
-      <SceneChatFeed messages={messages} observeMode={observeMode} observeCast={observeCast} activeWorkspace={activeWorkspace} location={location} activeZone={activeZone} traveledWithChars={traveledWithChars} isWorkspaceScene={isWorkspaceScene} homeResidentsPresent={homeResidentsPresent} familyMemberNpcsPresent={familyMemberNpcsPresent} homeResidentsAway={homeResidentsAway} familyMemberNpcsAway={familyMemberNpcsAway} workerCharacters={workerCharacters} unifiedPresenceEntities={unifiedPresenceEntities} characterIds={characterIds} isTyping={isTyping} isObservingTurn={isObservingTurn} settings={settings} currentUser={currentUser} queryClient={queryClient} base44={base44} setPendingPurchase={setPendingPurchase} setMessages={setMessages} onTryOn={handleTryOn} bottomRef={bottomRef} />
+      <SceneChatFeed messages={messages} observeMode={observeMode} observeCast={observeCast} activeWorkspace={activeWorkspace} location={location} activeZone={activeZone} traveledWithChars={traveledWithChars} isWorkspaceScene={isWorkspaceScene} homeResidentsPresent={homeResidentsPresent} familyMemberNpcsPresent={familyMemberNpcsPresent} homeResidentsAway={homeResidentsAway} familyMemberNpcsAway={familyMemberNpcsAway} workerCharacters={workerCharacters} unifiedPresenceEntities={unifiedPresenceEntities} characterIds={characterIds} isTyping={isTyping} isObservingTurn={isObservingTurn} settings={settings} currentUser={currentUser} queryClient={queryClient} base44={base44} setPendingPurchase={setPendingPurchase} setMessages={setMessages} onTryOn={handleTryOn} onPlayWith={handlePlayWith} onTestVehicle={handleTestVehicle} bottomRef={bottomRef} />
 
       {/* Action strip — everything available here. In a watched scene it is what they do. */}
       <SceneActionStrip
@@ -2408,7 +2366,7 @@ export default function Scene() {
       <InviteToSceneModal isOpen={showInviteModal} onClose={() => setShowInviteModal(false)} location={location} characters={characters} userDisplayName={displayName} initiator={characterInviter} onCharacterArrived={(char) => { setExtraNpcs((prev) => prev.find((n) => n.id === char.id) ? prev : [...prev, char]); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `${char.name} arrives at ${location.name}.`, timestamp: new Date().toISOString() }]); queryClient.invalidateQueries({ queryKey: ["activeCharacters", currentUser?.email] }); queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }); }} />
       <ConversationTypeSelector isOpen={!!conversationModal} onClose={() => setConversationModal(null)} onSelect={(conversationType) => { if (conversationType === "one_on_one" && conversationModal?.npcId && conversationModal?.npcName) { setPrivateTarget({ id: conversationModal.npcId, name: conversationModal.npcName }); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `You pull ${conversationModal.npcName} aside for a private conversation.`, timestamp: new Date().toISOString() }]); } else setPrivateTarget(null); }} npcName={conversationModal?.npcName || "them"} hasEmployees={conversationModal?.hasEmployees || false} isGroup={conversationModal?.isGroup || false} />
       <LeaveLocationModal isOpen={showLeaveModal} onClose={() => setShowLeaveModal(false)} locationName={location.name} broughtCharacters={broughtCharacters} onLeaveWithChars={handleLeaveWithCharacters} onLeaveCharactersBehind={handleLeaveCharactersBehind} onStayHere={handleStayHere} />
-      <ProductPurchaseModal isOpen={!!pendingPurchase} price={pendingPurchase?.price} productId={pendingPurchase?.productId} preview_image_url={pendingPurchase?.preview_image_url} userBalance={settings.user_balance ?? 6000} userSettings={settings} currentUser={currentUser} traveledWithChars={shoppingPresent} accountCharacters={shoppingRecipients} onShiftEmployeeIds={shoppingOnShiftIds} userPresent={!observeMode} item_label={pendingPurchase?.item_label} item_category={pendingPurchase?.item_category} item_wearable={pendingPurchase?.item_wearable} action_id={pendingPurchase?.action_id} purchase_source={pendingPurchase?.purchase_source} item_kind={pendingPurchase?.item_kind} defaultPayerId={pendingPurchase?.default_payer_id || null} location_name={location?.name} onClose={() => setPendingPurchase(null)} onPurchased={(purchase) => { setPendingPurchase(null); if (purchase.entry) setPendingClosetEntry(purchase); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: purchaseConfirmationLine(purchase), timestamp: new Date().toISOString() }]); }} />
+      <ProductPurchaseModal isOpen={!!pendingPurchase} price={pendingPurchase?.price} productId={pendingPurchase?.productId} preview_image_url={pendingPurchase?.preview_image_url} userBalance={settings.user_balance ?? 6000} userSettings={settings} currentUser={currentUser} traveledWithChars={shoppingPresent} accountCharacters={shoppingRecipients} onShiftEmployeeIds={shoppingOnShiftIds} userPresent={!observeMode} item_label={pendingPurchase?.item_label} item_category={pendingPurchase?.item_category} item_wearable={pendingPurchase?.item_wearable} item_details={pendingPurchase?.item_details || null} action_id={pendingPurchase?.action_id} purchase_source={pendingPurchase?.purchase_source} item_kind={pendingPurchase?.item_kind} defaultPayerId={pendingPurchase?.default_payer_id || null} location_name={location?.name} onClose={() => setPendingPurchase(null)} onPurchased={(purchase) => { setPendingPurchase(null); if (purchase.entry) setPendingClosetEntry(purchase); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: purchaseConfirmationLine(purchase), timestamp: new Date().toISOString() }]); }} />
 
       {/* The paid purchase opens the recipient's real closet entry interface. */}
       <PurchaseClosetEntryModal

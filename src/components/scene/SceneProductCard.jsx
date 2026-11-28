@@ -1,7 +1,13 @@
 import React, { useState, useEffect } from "react";
 import { base44 } from "@/api/base44Client";
-import { RefreshCw, Check, X, ShoppingBag, Shirt } from "lucide-react";
-import { pickMerchandise } from "@/lib/venueMerchandise.js";
+import { RefreshCw, Check, X, ShoppingBag, Shirt, PawPrint, Car } from "lucide-react";
+import { pickMerchandise, PET_TYPE_OPTIONS } from "@/lib/venueMerchandise.js";
+
+/** What kind of animal this offer is, in the existing pet-type wording. */
+function speciesLabel(details) {
+  const option = PET_TYPE_OPTIONS.find((o) => o.value === details?.species);
+  return option ? option.label : (details?.breed || "Pet");
+}
 
 /**
  * SceneProductCard — venue-aware product card with:
@@ -23,7 +29,14 @@ export default function SceneProductCard({
   // Try On runs through the existing top-Scenes image pathway, choosing WHO tries it on
   // from the people actually in this scene. It never charges and never touches a closet.
   onTryOn,
+  // Play With and Test are the same kind of interaction for a live animal and a vehicle:
+  // the existing top-Scenes image, the exact merchandise from this card, no charge.
+  onPlayWith,
+  onTestVehicle,
 }) {
+  const isPet = msg.item_category === "pet";
+  const isVehicle = msg.item_category === "vehicle";
+  const isProperty = isPet || isVehicle;
   // The image this card generated is kept on the message itself, so a re-render or a
   // remount reuses the exact image the user saw instead of generating a different one.
   const [itemImageUrl, setItemImageUrl] = useState(msg.item_image_url || null);
@@ -67,6 +80,23 @@ export default function SceneProductCard({
           return `Professional food photography of ${itemLabel}, served generously in a simple bowl or on a tray at a community meal service, warm natural light, close-up, high detail, no drinks`;
         }
         return `Professional food photography of ${itemLabel}, beautifully plated on a dish, restaurant quality, close-up, clean light background, high detail, no drinks`;
+      }
+      case "pet": {
+        // The animal is shown as itself, in the enclosure its species actually lives in.
+        const species = msg.item_details?.species;
+        const setting = species === "fish"
+          ? "inside a clean glass aquarium with water, gravel and plants"
+          : species === "reptile"
+            ? "inside a clean glass terrarium with substrate and a hide"
+            : species === "bird"
+              ? "perched inside a clean bird cage with perches"
+              : "in a clean, well-lit pet store enclosure with bedding";
+        return `Photorealistic photograph of a ${itemLabel} ${setting} at a pet store, the animal's breed, coloring and markings clearly visible, full body, sharp detail, no people`;
+      }
+      case "vehicle": {
+        const d = msg.item_details || {};
+        const kind = d.vehicle_type ? ` ${String(d.vehicle_type).replace(/_/g, " ")}` : "";
+        return `Photorealistic automotive photograph of a ${itemLabel}, a ${d.exterior_color || ""}${kind} parked in a car dealership showroom, full-body exterior three-quarter view, the whole vehicle in frame, accurate body style and paint, interior visible through the glass${prefSuffix}, no people, no added text`;
       }
       case "clothing":
         // A complete outfit is photographed as a whole look; a single item on its own.
@@ -130,9 +160,11 @@ export default function SceneProductCard({
 
   const handleAccept = () => {
     if (status !== "pending") return;
-    setStatus("accepted");
 
     if (msg.purchase_type === "clothing" || msg.purchase_type === "purchase") {
+      // A pet or a vehicle purchase can be cancelled, so its card stays usable until it is
+      // actually bought — nothing is owned just because the modal was opened.
+      if (!isProperty) setStatus("accepted");
       // Clothing/durable goods → ProductPurchaseModal (handles closet save + transaction authority)
       setPendingPurchase({
         price: msg.price,
@@ -141,6 +173,8 @@ export default function SceneProductCard({
         item_label: msg.item_label,
         item_category: msg.item_category,
         item_wearable: msg.item_wearable,
+        // A pet or a vehicle keeps its own established details into the purchase.
+        item_details: msg.item_details || null,
         action_id: msg.id,
         purchase_type: msg.purchase_type,
         action_class: msg.action_class || 'purchase',
@@ -205,6 +239,7 @@ export default function SceneProductCard({
           item_wearable: next.wearable !== false,
           item_merchandise: next.family,
           item_merchandise_families: families,
+          item_details: next.details || null,
           tried_on: false,
           timestamp: new Date().toISOString(),
         },
@@ -269,6 +304,21 @@ export default function SceneProductCard({
       <div className="text-center">
         <p className="text-xs font-semibold text-foreground leading-tight">{msg.item_label || "Item"}</p>
         <p className="text-sm font-bold text-primary mt-0.5">{msg.is_free ? "Free" : `$${msg.price}`}</p>
+        {isPet && (
+          <p className="text-[10px] text-muted-foreground mt-0.5 leading-tight">
+            {speciesLabel(msg.item_details)}
+            {msg.item_details?.breed && msg.item_details.breed !== msg.item_label ? ` · ${msg.item_details.breed}` : ""}
+          </p>
+        )}
+        {isVehicle && (
+          <p className="text-[10px] text-muted-foreground mt-0.5 leading-tight">
+            {[String(msg.item_details?.vehicle_type || "").replace(/_/g, " "), msg.item_details?.exterior_color, msg.item_details?.interior_color]
+              .filter(Boolean).join(" · ")}
+          </p>
+        )}
+        {(isPet || isVehicle) && msg.item_details?.description && (
+          <p className="text-[10px] text-muted-foreground/80 italic mt-0.5 leading-tight">{msg.item_details.description}</p>
+        )}
         {msg.locationName && (
           <p className="text-[10px] text-muted-foreground">{msg.locationName}</p>
         )}
@@ -297,6 +347,26 @@ export default function SceneProductCard({
             className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg bg-secondary border border-border text-xs text-foreground hover:bg-primary/10 hover:text-primary hover:border-primary/40 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
           >
             <Shirt className="w-3 h-3" /> Try On
+          </button>
+        )}
+        {isPet && (
+          <button
+            onClick={() => onPlayWith?.(msg, itemImageUrl)}
+            disabled={isLoadingImage || !itemImageUrl}
+            title="Play with this pet — no charge, nothing is bought"
+            className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg bg-secondary border border-border text-xs text-foreground hover:bg-primary/10 hover:text-primary hover:border-primary/40 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+          >
+            <PawPrint className="w-3 h-3" /> Play With
+          </button>
+        )}
+        {isVehicle && (
+          <button
+            onClick={() => onTestVehicle?.(msg, itemImageUrl)}
+            disabled={isLoadingImage || !itemImageUrl}
+            title="Sit in it and try it out — no charge, nothing is bought"
+            className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg bg-secondary border border-border text-xs text-foreground hover:bg-primary/10 hover:text-primary hover:border-primary/40 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+          >
+            <Car className="w-3 h-3" /> Test
           </button>
         )}
       </div>

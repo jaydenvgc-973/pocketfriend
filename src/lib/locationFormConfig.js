@@ -67,7 +67,7 @@ export const SUBTYPE_OPTIONS = {
   gym: ["gym", "yoga_studio", "pilates_studio", "crossfit_box", "swimming_pool"],
   outdoor: ["park", "hiking_trail", "beach", "lake", "river", "botanical_garden", "urban_plaza", "slums", "city", "neighborhood", "unhoused_living_space"],
   grocery: ["grocery_store", "supermarket", "farmers_market", "convenience_store"],
-  business: ["clothing_store", "shoe_store", "sneaker_store", "accessories_store", "bookstore", "record_store", "electronics_store", "home_goods_store", "thrift_store", "warehouse", "mall", "shopping_district", "salon", "barbershop"],
+  business: ["clothing_store", "shoe_store", "sneaker_store", "accessories_store", "bookstore", "record_store", "electronics_store", "home_goods_store", "thrift_store", "warehouse", "mall", "shopping_district", "salon", "barbershop", "pet_store", "car_dealership"],
   workplace: ["office", "corporate_office", "startup_office", "factory", "warehouse", "retail_store"],
   medical: ["hospital", "clinic", "urgent_care", "dentist_office", "therapist_office"],
   education: ["university", "college", "high_school", "elementary_school", "library", "classroom"],
@@ -121,6 +121,8 @@ export const SUBTYPE_LABELS = {
   unhoused_living_space: "Unhoused Living Space",
   public_square_plaza: "Public Square / Plaza",
   restaurant: "Restaurant / Food Service",
+  pet_store: "Pet Store",
+  car_dealership: "Car Dealership",
 };
 
 export const WORK_CATEGORIES = ['workplace', 'business', 'food_drink', 'gym', 'social', 'education', 'medical', 'school', 'grocery', 'religion', 'government', 'community', 'jail_prison', 'transportation'];

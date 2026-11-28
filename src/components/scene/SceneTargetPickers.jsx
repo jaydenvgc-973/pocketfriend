@@ -9,6 +9,17 @@ import SceneTargetPicker from "@/components/scene/SceneTargetPicker";
  * each courtroom role. They are grouped here only so the Scenes page stays readable; the
  * props and the handlers are exactly the ones the page already passed to them.
  */
+/**
+ * What the merchandise interaction is called for the person holding this card. Trying on,
+ * playing with an animal and testing a vehicle are the same kind of moment.
+ */
+function tryOnActionLabel(request) {
+  const item = request?.msg?.item_label || "item";
+  if (request?.kind === "play_with") return `Play with the ${item}`;
+  if (request?.kind === "test_vehicle") return `Test the ${item}`;
+  return `Try on the ${item}`;
+}
+
 export default function SceneTargetPickers({ v }) {
   const {
     actorAction, directedActorsFor, eligibleForAction, observeMode, observeActors, activityActors,
@@ -61,14 +72,15 @@ export default function SceneTargetPickers({ v }) {
         heading={recipientAction ? `${recipientAction.emoji} ${recipientAction.label} — who is involved?` : null}
         hint="Only people who are here can be chosen."
       />
-      {/* Try On — who in this scene wears the item from the card. Only people here. */}
+      {/* Try On / Play With / Test — who in this scene does it with the item from the card.
+          Only people here; nothing is charged and nobody owns anything. */}
       <SceneTargetPicker
-        action={tryOnRequest ? { emoji: "🪞", label: `Try on the ${tryOnRequest.msg.item_label || "item"}` } : null}
+        action={tryOnRequest ? { emoji: tryOnRequest.kind === "play_with" ? "🐾" : tryOnRequest.kind === "test_vehicle" ? "🚗" : "🪞", label: tryOnActionLabel(tryOnRequest) } : null}
         targets={tryOnRequest?.cast || []}
         onSelect={handleTryOnConfirm}
         onClose={() => setTryOnRequest(null)}
-        heading={tryOnRequest ? `Try on the ${tryOnRequest.msg.item_label || "item"} — who?` : null}
-        hint="Only people in this scene can try it on."
+        heading={tryOnRequest ? `${tryOnActionLabel(tryOnRequest)} — who?` : null}
+        hint="Only people in this scene can do this."
       />
       {/* Courtroom activities: the role assigned in the setup decides who may act. */}
       <SceneTargetPicker

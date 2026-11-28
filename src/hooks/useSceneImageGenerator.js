@@ -150,7 +150,7 @@ export function useSceneImageGenerator({ transcript = [], getActiveSpace = null 
     const isCurrent = () => ticket === requestTicketRef.current;
     // A drawn picture is the picture of the moment — and it clears any notice about a
     // request the image service refused.
-    const commit = (url) => { if (!isCurrent()) return; setSceneImage(url); publishSceneImageSuccess(); };
+    const commit = (url) => { if (!isCurrent()) return; setSceneImage(url); publishSceneImageSuccess(); return url; };
     // The place's own reference image is not a picture of anything that happened. Showing
     // it after a refused request must never read as a success, so it never clears the notice.
     const commitPlaceImage = (url) => { if (isCurrent()) setSceneImage(url); };
@@ -445,7 +445,7 @@ export function useSceneImageGenerator({ transcript = [], getActiveSpace = null 
           prompt: `${identityPrefix}${finalPrompt} Photorealistic, high quality, authentic.`,
           existing_image_urls: refKey.visualRefs.length > 0 ? refKey.visualRefs : undefined
         });
-        commit(result.url);
+        return commit(result.url);
       } catch {
         // A refused picture is never passed off as the moment itself. An activity's own
         // picture never falls back to the place's empty reference image — that fallback is
@@ -493,7 +493,7 @@ export function useSceneImageGenerator({ transcript = [], getActiveSpace = null 
           prompt: `${identityPrefix}${prompt}`,
           existing_image_urls: refKey.visualRefs.length > 0 ? refKey.visualRefs : undefined
         });
-        commit(result.url);
+        return commit(result.url);
       } catch {
         commitPlaceImage(zoneFallbackImage);
         publishSceneImageFailure();
@@ -532,7 +532,7 @@ export function useSceneImageGenerator({ transcript = [], getActiveSpace = null 
         prompt: `${identityPrefix}${prompt}`,
         existing_image_urls: refKey.visualRefs.length > 0 ? refKey.visualRefs : undefined
       });
-      commit(result.url);
+      return commit(result.url);
     } catch {
       commitPlaceImage(zoneFallbackImage);
       publishSceneImageFailure();

@@ -172,6 +172,10 @@ export function checkImageTrigger({
       // Show me something else stay in the same category and try on the same item.
       item_merchandise: merchandise?.family || null,
       item_merchandise_families: purchaseMerchandise ? [].concat(purchaseMerchandise) : null,
+      // A pet or a vehicle is one individual animal or car with its own established
+      // details. They travel with the card so the picture, the interaction, the purchase
+      // and the belongings record all describe the same one.
+      item_details: merchandise?.details || null,
       // The stated purpose of this visit and the individual doing the shopping. Kept on the
       // card so another item, Try On and the purchase step stay in the same context.
       shopping_preferences: purchasePreferences || null,
