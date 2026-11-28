@@ -434,7 +434,7 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
       if (isLocationOpen(workLocation, currentTime) === false) continue;
       const locationShift = workLocation.worker_shifts?.[character.id];
       if (locationShift) {
-        if (isOnShiftNow(locationShift, currentTime)) {
+        if (isOnShiftNow(locationShift, currentTime, character.work_days)) {
           return {
             resolved_current_location_id: job.locId,
             resolved_current_location_name: workLocation.name || 'Work',
@@ -853,7 +853,7 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
  * Check if a character is currently on shift based on location worker_shifts data
  * Handles overnight shifts (e.g. 17:00–01:00)
  */
-function isOnShiftNow(shift, currentTime = new Date()) {
+function isOnShiftNow(shift, currentTime = new Date(), fallbackDays = null) {
   if (!shift?.start || !shift?.end) return false;
   // CRITICAL: Convert to Eastern Time
   const etTime = new Date(currentTime.toLocaleString('en-US', { timeZone: 'America/New_York' }));
@@ -865,19 +865,25 @@ function isOnShiftNow(shift, currentTime = new Date()) {
   const [endH, endM] = shift.end.split(':').map(Number);
   const startMin = startH * 60 + startM;
   const endMin = endH * 60 + endM;
-  const hasDays = shift.days && shift.days.length > 0;
+  // DAY AUTHORITY: the shift's own days first, then the character's established work
+  // days. A shift that records no working day — and a character with none — asserts no
+  // shift at all. A day off is never read as "every day".
+  const days = (Array.isArray(shift.days) && shift.days.length > 0)
+    ? shift.days
+    : (Array.isArray(fallbackDays) && fallbackDays.length > 0 ? fallbackDays : []);
+  if (days.length === 0) return false;
 
   // Overnight shift (e.g. 17:00 -> 01:00): shift starts on a work day and ends after midnight.
   // On shift if: today is a work day AND time >= start (e.g. Fri 5 PM -> midnight)
   //           OR yesterday was a work day AND time < end (e.g. Fri 12 AM -> 1 AM, from Thu shift)
   if (endMin < startMin) {
-    const afterStartToday = (!hasDays || shift.days.includes(today)) && now >= startMin;
-    const beforeEndYesterday = (!hasDays || shift.days.includes(yesterday)) && now < endMin;
+    const afterStartToday = days.includes(today) && now >= startMin;
+    const beforeEndYesterday = days.includes(yesterday) && now < endMin;
     return afterStartToday || beforeEndYesterday;
   }
 
   // Same-day shift
-  if (hasDays && !shift.days.includes(today)) return false;
+  if (!days.includes(today)) return false;
   return now >= startMin && now < endMin;
 }
 
@@ -950,7 +956,7 @@ function _isCharacterCurrentlyOnAnyShift(character, locationMap = {}, currentTim
       const loc = locationMap[_primaryLocId];
       if (loc) {
         const shift = loc.worker_shifts?.[character.id];
-        if (shift && isOnShiftNow(shift, etTime)) return true;
+        if (shift && isOnShiftNow(shift, etTime, character.work_days)) return true;
       }
     }
   }
@@ -967,7 +973,7 @@ function _isCharacterCurrentlyOnAnyShift(character, locationMap = {}, currentTim
         const loc = locationMap[entry.location_id];
         if (loc) {
           const shift = loc.worker_shifts?.[character.id];
-          if (shift && isOnShiftNow(shift, etTime)) return true;
+          if (shift && isOnShiftNow(shift, etTime, character.work_days)) return true;
         }
       } else if (entry.is_rabbit_hole === true && entry.shift_start && entry.shift_end) {
         if (isOnShiftNow({ start: entry.shift_start, end: entry.shift_end, days: entry.work_days || null }, etTime)) return true;
@@ -1187,7 +1193,7 @@ export function resolveActiveWorkJob(character, locationMap = {}, currentTime = 
     if (!loc) continue;
     const locShift = loc.worker_shifts?.[character.id];
     if (locShift?.start && locShift?.end) {
-      if (isOnShiftNow(locShift, etTime)) {
+      if (isOnShiftNow(locShift, etTime, character.work_days)) {
         return { locationId: loc.id, locationName: loc.name, shift: locShift };
       }
       continue;

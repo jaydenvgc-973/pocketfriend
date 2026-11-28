@@ -492,13 +492,15 @@ Deno.serve(async (req) => {
           const _shiftStartMin = _sh * 60 + _sm;
           const _shiftEndMin = _eh * 60 + _em;
           const _isCrossMidnight = _shiftEndMin < _shiftStartMin;
-          const _hasDays = _shift.days && _shift.days.length > 0;
-          if (_shiftStartMin === _expMin && (!_hasDays || _shift.days.includes(_expDay))) { _occurrenceValid = true; break; }
+          // A shift that records no working day has no occurrence to validate, so it never
+          // keeps a work lock alive on a day the character does not work.
+          const _days = Array.isArray(_shift.days) ? _shift.days : [];
+          if (_shiftStartMin === _expMin && _days.includes(_expDay)) { _occurrenceValid = true; break; }
           if (_shiftEndMin === _expMin) {
             if (_isCrossMidnight) {
-              if (!_hasDays || _shift.days.includes(_expYesterday)) { _occurrenceValid = true; break; }
+              if (_days.includes(_expYesterday)) { _occurrenceValid = true; break; }
             } else {
-              if (!_hasDays || _shift.days.includes(_expDay)) { _occurrenceValid = true; break; }
+              if (_days.includes(_expDay)) { _occurrenceValid = true; break; }
             }
           }
         }
@@ -810,8 +812,8 @@ Deno.serve(async (req) => {
           let minsToStart = sMin - _sNowMin;
           if (minsToStart < 0) minsToStart += 1440;
           if (minsToStart >= 0 && minsToStart <= 30) {
-            const hasDays = _sh.days && _sh.days.length > 0;
-            if (!hasDays || _sh.days.includes(_sToday)) { _sImminent = locId; break; }
+            // Only a job that actually works today can start within the next half hour.
+            if (Array.isArray(_sh.days) && _sh.days.includes(_sToday)) { _sImminent = locId; break; }
           }
         }
         // Also check rabbit-hole jobs for imminent shifts
@@ -823,8 +825,7 @@ Deno.serve(async (req) => {
             let minsToStart2 = sMin2 - _sNowMin;
             if (minsToStart2 < 0) minsToStart2 += 1440;
             if (minsToStart2 >= 0 && minsToStart2 <= 30) {
-              const hasDays2 = job.shift.days && job.shift.days.length > 0;
-              if (!hasDays2 || job.shift.days.includes(_sToday)) { _sImminent = job.workplaceName; break; }
+              if (Array.isArray(job.shift.days) && job.shift.days.includes(_sToday)) { _sImminent = job.workplaceName; break; }
             }
           }
         }
@@ -1322,8 +1323,7 @@ Deno.serve(async (req) => {
             let minsToStart = sMin - _nowMin;
             if (minsToStart < 0) minsToStart += 1440;
             if (minsToStart >= 0 && minsToStart <= 30) {
-              const hasDays = _shift.days && _shift.days.length > 0;
-              if (!hasDays || _shift.days.includes(_today)) { imminentOtherJob = locId; break; }
+              if (Array.isArray(_shift.days) && _shift.days.includes(_today)) { imminentOtherJob = locId; break; }
             }
           }
           // Also check rabbit-hole jobs for imminent shifts
@@ -1335,8 +1335,7 @@ Deno.serve(async (req) => {
               let minsToStart2 = sMin2 - _nowMin;
               if (minsToStart2 < 0) minsToStart2 += 1440;
               if (minsToStart2 >= 0 && minsToStart2 <= 30) {
-                const hasDays2 = job.shift.days && job.shift.days.length > 0;
-                if (!hasDays2 || job.shift.days.includes(_today)) { imminentOtherJob = job.workplaceName; break; }
+                if (Array.isArray(job.shift.days) && job.shift.days.includes(_today)) { imminentOtherJob = job.workplaceName; break; }
               }
             }
           }
