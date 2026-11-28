@@ -146,7 +146,8 @@ Return JSON:
   "decision": "coming_now" | "coming_later" | "maybe" | "declined",
   "delay_minutes": number (0 if coming_now, 5-45 if coming_later, 0 otherwise),
   "reason": "brief reason for decision (e.g. 'finishing up at work', 'asleep', 'sounds fun')",
-  "response_text": "What they actually say in response to the invite — 1-2 sentences, in character, natural and specific. No quotes within the string."
+  "response_text": "What they actually say in response to the invite — 1-2 sentences, in character, natural and specific. No quotes within the string.",
+  "bringing_accompanying": boolean (only when a baby in their care was named above: true only if they are bringing that baby with them)
 }
 
 Rules:
@@ -155,6 +156,7 @@ Rules:
 - If at school: likely "coming_later" or "declined"
 - If free and friendly (friendship >60): "coming_now" or "coming_later" depending on mood
 - If emotional_state is negative (irritated, defensive, sad): more likely to decline or hesitate
+- A baby in their care changes the answer naturally: they may bring the baby, leave the baby with someone at home, or decline because of the baby. Never assume the baby comes — their own words and circumstances decide.
 - Vary the language — don't make everyone sound the same`,
       response_json_schema: {
         type: 'object',
@@ -163,6 +165,7 @@ Rules:
           delay_minutes: { type: 'number' },
           reason: { type: 'string' },
           response_text: { type: 'string' },
+          bringing_accompanying: { type: 'boolean' },
         },
       },
     });
@@ -178,6 +181,29 @@ Rules:
     // pathway (Who's Here, Travel map, Home page). This fixes the systemic break:
     // arrived character → authoritative presence → Who's Here roster.
     const nowISO = new Date().toISOString();
+
+    // A baby comes along only when the parent said so. They are written through the same
+    // authoritative fields as the parent, so Who's Here and Travel see them together —
+    // and never on their own, since the baby never received an invitation of their own.
+    const bringingAccompanying = accompanying.length > 0 && result?.bringing_accompanying === true;
+    const moveAccompanying = async () => {
+      if (!bringingAccompanying) return;
+      for (const baby of accompanying) {
+        await base44.asServiceRole.entities.Character.update(baby.id, {
+          current_location_id: locationId,
+          current_activity: `at ${locationName}`,
+          resolved_current_location_id: locationId,
+          resolved_current_location_name: locationName,
+          resolved_location_type: 'visit',
+          resolved_presence_status: 'visiting',
+          resolved_source_reason: 'accompanying_parent',
+          resolved_last_updated_at: new Date().toISOString(),
+          travel_status: 'not_traveling',
+          travel_destination_location_id: null,
+        }).catch(() => {});
+      }
+    };
+
     if ((decision === 'coming_now' || decision === 'coming_later') && invitee?.id) {
       if (decision === 'coming_now') {
         await base44.asServiceRole.entities.Character.update(invitee.id, {
@@ -193,6 +219,7 @@ Rules:
           travel_status: 'not_traveling',
           travel_destination_location_id: null,
         }).catch(() => {});
+        await moveAccompanying();
       }
       // For coming_later: location update happens after delay
       if (decision === 'coming_later') {
@@ -213,6 +240,7 @@ Rules:
             travel_status: 'not_traveling',
             travel_destination_location_id: null,
           }).catch(() => {});
+          await moveAccompanying();
         }, delayMinutes * 60 * 1000);
       }
     }
@@ -225,6 +253,8 @@ Rules:
       delay_minutes: delayMinutes,
       reason: result?.reason || '',
       response_text: responseText,
+      bringing_accompanying: bringingAccompanying,
+      accompanying_names: bringingAccompanying ? accompanying.map((a: any) => a.name) : [],
       avatar_url: invitee?.avatar_url || null,
     });
   } catch (error) {
