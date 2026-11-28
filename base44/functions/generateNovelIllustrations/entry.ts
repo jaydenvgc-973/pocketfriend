@@ -506,7 +506,14 @@ Deno.serve(async (req) => {
 
       // Who should be in it: the plate's own people, plus anyone the reader corrected.
       const pickedIds = names(body.intended_subject_ids).filter((id) => typeof id === 'string' && id !== '__user__');
-      const peopleById = await resolvePeopleByIds(base44, [...names(spec.person_ids), ...pickedIds]);
+      // The plate's own recorded people keep the novel's existing rules. The people the
+      // reader chose here are resolved as chosen, so the avatar shown in the picker is the
+      // avatar the plate is drawn from — never a generic substitute.
+      const recordedPeople = await resolvePeopleByIds(base44, names(spec.person_ids));
+      const pickedPeople = pickedIds.length
+        ? await resolvePeopleByIds(base44, pickedIds, { explicitlySelected: true })
+        : new Map();
+      const peopleById = new Map([...recordedPeople, ...pickedPeople]);
       const people = [...peopleById.values()];
 
       // A world name in the scene resolves to its established user, never to a generic face.
