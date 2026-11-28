@@ -176,13 +176,17 @@ export function useSceneImageGenerator({ transcript = [], getActiveSpace = null 
       if (!spaceId || !location) return null;
       return getUnitById(location, spaceId) || getWorkplaceById(location, spaceId) || null;
     })();
+    // The same resolved description also guides this place's ordinary people further down:
+    // a venue's own words establish who usually comes here, how they dress, what they are
+    // doing and how full the room is. It is read once and used for both.
+    const spaceDescriptionText = resolveSpaceDescription({
+      space: activeSpace,
+      zoneName: activeZone,
+      zones: locationZones,
+      locationDescription: location?.description || "",
+    }).text;
     const spaceDescriptionNote = buildSpaceDescriptionNote({
-      description: resolveSpaceDescription({
-        space: activeSpace,
-        zoneName: activeZone,
-        zones: locationZones,
-        locationDescription: location?.description || "",
-      }).text,
+      description: spaceDescriptionText,
       label: activeSpace?.unit_name || activeSpace?.name || location?.name || "this place",
       kind: activeSpace?.workplace_id ? "workspace" : activeSpace?.unit_id ? "residence" : "place",
     });
@@ -322,8 +326,19 @@ export function useSceneImageGenerator({ transcript = [], getActiveSpace = null 
     const namedSubjectsRule = (people) => (people.length > 0
       ? `Only these people are identifiable: ${people.map((c) => c.name).join(', ')} — each one present exactly once, never duplicated, never replaced by an invented or background person.`
       : `No named person is the subject of this frame.`);
+    // ── THE PLACE'S OWN DESCRIPTION DECIDES WHO ITS ORDINARY PEOPLE ARE ──
+    // Two places of the same kind are not the same room: a description that establishes a
+    // quiet neighborhood bar and one that establishes a packed club must never both be
+    // drawn as the same generic crowd. The place's own established words decide its usual
+    // clientele, how they dress, what they are doing, the energy of the room and how full
+    // it is. They describe the place and its ordinary visitors only — never a named person,
+    // who keeps their own face, body, hair, clothing and personality exactly as established
+    // and who need not resemble the usual crowd at all.
+    const crowdDescriptionRule = (allowBackgroundExtras && spaceDescriptionText)
+      ? ` This place's own established description decides who its ordinary people are: "${spaceDescriptionText}" Let it set the typical clientele, the staff who serve them, how those people are dressed, what they are doing, the social atmosphere and energy of the room, and how busy or quiet it feels — read together with what kind of place this is, the time of day and what is happening right now. The background people must look and behave like the people this description establishes, never a generic crowd. It describes the place and its usual visitors only: it never changes a named person's face, body type, hairstyle, clothing, personality or identity, and the named people are individuals here who need not resemble the usual crowd.`
+      : '';
     const ambientRule = allowBackgroundExtras
-      ? ` The venue is populated as it really is right now by ordinary background people: ${ambientText}. They are anonymous strangers with no name, no identity, and NO reference images — none of the reference images supplied with this request belongs to any of them. They fill the room behind the named subjects in a natural, believable number for this kind of place at this hour — a few in a waiting room, a real crowd in a busy nightclub — always at a distance and softly out of focus: never in the foreground, never in the center, never obscuring, standing in for or replacing a named subject, and never the subject of the photograph.`
+      ? ` The venue is populated as it really is right now by ordinary background people: ${ambientText}. They are anonymous strangers with no name, no identity, and NO reference images — none of the reference images supplied with this request belongs to any of them. They fill the room behind the named subjects in a natural, believable number for this kind of place at this hour — a few in a waiting room, a real crowd in a busy nightclub — always at a distance and softly out of focus: never in the foreground, never in the center, never obscuring, standing in for or replacing a named subject, and never the subject of the photograph.${crowdDescriptionRule}`
       : '';
     // ── BACKGROUND IDENTITY SEPARATION ──
     // A background person of the venue is a DIFFERENT person with their own face and
