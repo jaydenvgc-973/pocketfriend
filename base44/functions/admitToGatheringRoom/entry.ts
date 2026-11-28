@@ -163,9 +163,30 @@ Deno.serve(async (req) => {
     );
     const currentCount = allRoomParticipants.filter(p => validSessionIds.has(p.session_id)).length;
 
-    // ── 6. PARTY SIZE: user + characters (all count toward same capacity) ──
+    // ── 5.5. THIS ACCOUNT'S EXISTING SESSION IN THIS ROOM ────────────────────
+    // A character sent ahead (Carry on without me) is already counted in currentCount.
+    // Counting it again would refuse an entry that only needs the user's own slot, so
+    // the party size is measured against what is actually still missing. Resolved once
+    // here and reused in step 9.5 — never queried twice.
+    const existingRoomSession = trulyActiveSessions.find(
+      s => s.gathering_room_id === gatheringRoomId
+    ) || null;
+    const existingSessionParticipants = existingRoomSession
+      ? await base44.asServiceRole.entities.GatheringRoomParticipant.filter(
+          { session_id: existingRoomSession.id }, null, 50
+        )
+      : [];
+    const userAlreadyParticipant = existingSessionParticipants.some(p => p.participant_type === 'user');
+    const presentCharIds = new Set(
+      existingSessionParticipants
+        .filter(p => p.participant_type === 'character')
+        .map(p => p.participant_id)
+    );
+    const missingCharIds = characterIds.filter(id => !presentCharIds.has(id));
+
+    // ── 6. PARTY SIZE: user + characters, counting only those not already inside ──
     // A character-only entry occupies slots for its characters alone.
-    const partySize = characterOnly ? characterIds.length : 1 + characterIds.length;
+    const partySize = (characterOnly || userAlreadyParticipant ? 0 : 1) + missingCharIds.length;
 
     // ── 7. CAPACITY CHECK: atomic reject-if-over ──
     const MAX_CAPACITY = 8;
@@ -230,21 +251,10 @@ Deno.serve(async (req) => {
     // ahead with Carry on without me). Joining or admitting into it reuses that same
     // session and its participants — never a duplicate participant, never a second
     // session for the account, and never a reset of existing participation.
-    const existingRoomSession = trulyActiveSessions.find(
-      s => s.gathering_room_id === gatheringRoomId
-    ) || null;
-
     if (existingRoomSession) {
-      const sessionParticipants = await base44.asServiceRole.entities.GatheringRoomParticipant.filter(
-        { session_id: existingRoomSession.id }, null, 50
-      );
-      const hasUserParticipant = sessionParticipants.some(p => p.participant_type === 'user');
-      const presentCharIds = new Set(
-        sessionParticipants
-          .filter(p => p.participant_type === 'character')
-          .map(p => p.participant_id)
-      );
-      const missingCharIds = characterIds.filter(id => !presentCharIds.has(id));
+      // Participants, present characters and the user's own participation were resolved
+      // once in step 5.5 and are reused here — never queried or decided twice.
+      const hasUserParticipant = userAlreadyParticipant;
 
       // Character-only entry where the character is already inside: leave the existing
       // participation untouched.

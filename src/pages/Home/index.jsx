@@ -591,15 +591,20 @@ export default function Home() {
               // The character becomes a real participant through the existing entry
               // function; the user is not admitted and stays exactly where they are.
               if (inv.isGatheringRoom) {
-                try {
-                  await base44.functions.invoke('admitToGatheringRoom', {
-                    gathering_room_id: inv.gatheringRoomId,
-                    character_ids: [inv.characterId],
-                    character_only: true,
-                  });
-                } catch (err) {
-                  const data = err?.response?.data || err?.data || {};
-                  throw new Error(data.message || data.error || err?.message || 'the entry was not confirmed');
+                // Already inside the room: this selection only resolves the invitation.
+                // The character is left exactly as they are — never removed, re-added or
+                // reset — so no entry call is made for them.
+                if (!inv.characterAlreadyPresent) {
+                  try {
+                    await base44.functions.invoke('admitToGatheringRoom', {
+                      gathering_room_id: inv.gatheringRoomId,
+                      character_ids: [inv.characterId],
+                      character_only: true,
+                    });
+                  } catch (err) {
+                    const data = err?.response?.data || err?.data || {};
+                    throw new Error(data.message || data.error || err?.message || 'the entry was not confirmed');
+                  }
                 }
                 const remaining = invitations.filter(i => i.characterId !== inv.characterId);
                 setInvitations(remaining.length > 0 ? remaining : null);
@@ -611,6 +616,9 @@ export default function Home() {
                 }
                 queryClient.invalidateQueries({ queryKey: ["gatheringRooms"] });
                 queryClient.invalidateQueries({ queryKey: ["myActiveGatheringRoomSession"] });
+                // The character's authoritative location changed through the entry
+                // function — refresh the roster the same way Travel entry does.
+                queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
                 return;
               }
 

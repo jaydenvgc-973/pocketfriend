@@ -56,10 +56,6 @@ Deno.serve(async (req) => {
       !l.is_default_generic
     );
 
-    if (eligibleLocations.length === 0) {
-      return Response.json({ invitations: [], reason: 'No eligible locations found' });
-    }
-
     const eligibleLocMap = Object.fromEntries(eligibleLocations.map(l => [l.id, l]));
 
     // ── GATHERING ROOMS ───────────────────────────────────────────────────
@@ -71,6 +67,13 @@ Deno.serve(async (req) => {
     const gatheringRooms = await base44.asServiceRole.entities.GatheringRoom
       .filter({ is_active: true }, 'sort_order', 20)
       .catch(() => []);
+
+    // A user whose ordinary locations are all ineligible can still be invited to the
+    // established Gathering Rooms — they are destinations of their own, not derived
+    // from the location list.
+    if (eligibleLocations.length === 0 && gatheringRooms.length === 0) {
+      return Response.json({ invitations: [], reason: 'No eligible locations found' });
+    }
 
     // Cross-account presence, read once per generation from the existing session and
     // participant records of rooms that currently have people in them. No polling.
