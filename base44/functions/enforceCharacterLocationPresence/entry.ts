@@ -47,12 +47,13 @@ const _clampNeed = (v) => Math.max(0, Math.min(100, v));
 function isOnShiftNow(shift, etTime, fallbackDays = null) {
   if (!shift?.start || !shift?.end) return false;
   // Day authority: the shift's own days first, then the character's established
-  // work days. A shift that carries no days at all is not day-scoped, so the
-  // employer's operating hours (checked by the caller) decide access.
+  // work days. No working day recorded at all means no scheduled shift — a day off is
+  // never read as "every day", and no other day list is substituted for it.
   const days = (Array.isArray(shift.days) && shift.days.length > 0)
     ? shift.days
     : (Array.isArray(fallbackDays) && fallbackDays.length > 0 ? fallbackDays : null);
-  if (days && !days.includes(etTime.getDay())) return false;
+  if (!days) return false;
+  if (!days.includes(etTime.getDay())) return false;
   const now = etTime.getHours() * 60 + etTime.getMinutes();
   const [sh, sm] = shift.start.split(':').map(Number);
   const [eh, em] = shift.end.split(':').map(Number);
@@ -1087,7 +1088,12 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime, 
           etTime,
         );
       } else {
-        _scheduledHereNow = true; // no schedule recorded for this job — existing behavior
+        // No schedule recorded for this job. Scheduled enforcement has no scheduled shift
+        // to honour, so it never asserts one — employment alone is not an obligation, and
+        // the ordinary shift hours are never applied to a day the job records no shift on.
+        // An explicit user direction (Go to Work) keeps its existing off-schedule permission.
+        _scheduledHereNow = requested.requested_authority !== 'enforceCharacterWorkSchedule'
+          && requested.requested_authority !== 'autonomousCharacterMovement';
       }
     }
     if (!_scheduledHereNow) {

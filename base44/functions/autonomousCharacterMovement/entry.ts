@@ -162,41 +162,16 @@ function isLocationOpen(location) {
 }
 
 // ── PROTECTED ARRIVAL COMMITMENT PREDICATE (read-only) ──────────────────────
-// Determines ONLY whether an authoritative promised-arrival commitment currently
-// protects this character from non-emergency autonomous relocation. It performs
-// no movement, no commitment writes, and no status transitions.
-//
-// confirmMovementCommitment writes BOTH:
-//   CharacterCommitment: { commitment_type:'arrival', status:'active',
-//     interruptible:false, destination_location_id, expected_arrival_time,
-//     expected_arrival_window_minutes }
-//   Character: { pending_scheduled_relocation_at, next_location_id }
-// processScheduledRelocations owns those pending fields and clears them when the
-// relocation is fulfilled or abandoned — that authoritative registration IS the
-// lifecycle. No invented timer/expiration is added.
-//
-// Active pending arrival — protective when ALL hold:
-//   commitment_type === 'arrival', status === 'active', interruptible === false,
-//   destination_location_id exists,
-//   character.pending_scheduled_relocation_at exists,
-//   character.next_location_id === commitment.destination_location_id,
-//   expected_arrival_time is valid, pending_scheduled_relocation_at is valid,
-//   both timestamps represent the same scheduled instant,
-//   now >= expected_arrival_time - expected_arrival_window_minutes (window has opened).
-// The window OPENS protection; it does NOT close it. If the pending registration is
-// cleared, a stale 'active' commitment no longer protects — no symmetric post-ETA
-// expiration is invented.
-//
-// Fulfilled arrival — protective while:
-//   commitment_type === 'arrival', status === 'arrived', interruptible === false,
-//   destination_location_id === character.resolved_current_location_id.
-// Ends automatically when an authorized system changes the character's location.
-//
-// Work/school authority is NOT re-evaluated here. Tier 3.5 dispatch runs before
-// this predicate is computed and continues on its own authority, so a mandatory
-// shift/session naturally overrides the commitment without a competing check.
-// Timestamps are validated (NaN rejected). Query failures are logged and treated
-// as "no protection found" (non-fatal — does not crash the run).
+// Whether an authoritative promised-arrival commitment protects this character from
+// non-emergency autonomous relocation. No movement, no commitment writes, no status
+// transitions. confirmMovementCommitment writes both the CharacterCommitment and the
+// character's pending_scheduled_relocation_at / next_location_id; processScheduledRelocations
+// owns and clears those pending fields, and that registration IS the lifecycle — no
+// invented timer is added. Active pending arrival protects while the window is open
+// (now >= expected_arrival_time - window minutes); a cleared registration stops
+// protecting. A fulfilled arrival protects while the character is at the destination.
+// Work/school authority is not re-evaluated here. Timestamps are validated (NaN
+// rejected); query failures are logged and treated as "no protection found".
 async function getProtectedArrivalCommitment(base44, char) {
   if (!char?.id || !char?.owner_email) return null;
   let cs = null;
@@ -1253,8 +1228,9 @@ Deno.serve(async (req) => {
                 const loc = userLocations.find(l => l.id === entry.location_id);
                 const shift = loc ? loc.worker_shifts?.[char.id] : null;
                 if (shift?.start && shift?.end) {
-                  const shiftDays = Array.isArray(shift.days) && shift.days.length > 0 ? shift.days : null;
-                  if (shiftDays && !shiftDays.includes(dow)) continue;
+                  // No recorded working day means no shift today — never every day.
+                  const shiftDays = Array.isArray(shift.days) ? shift.days : [];
+                  if (!shiftDays.includes(dow)) continue;
                   const [sh, sm = 0] = shift.start.split(':').map(Number);
                   const [eh, em = 0] = shift.end.split(':').map(Number);
                   if (cur >= sh * 60 + sm && cur < eh * 60 + em) { onShiftNow = true; break; }
@@ -1262,8 +1238,9 @@ Deno.serve(async (req) => {
               } else if (entry.is_rabbit_hole === true) {
                 // Rabbit hole — entry.shift_start/shift_end are the only source
                 if (entry.shift_start && entry.shift_end) {
-                  const shiftDays = Array.isArray(entry.work_days) && entry.work_days.length > 0 ? entry.work_days : null;
-                  if (shiftDays && !shiftDays.includes(dow)) continue;
+                  // No recorded working day means no shift today — never every day.
+                  const shiftDays = Array.isArray(entry.work_days) ? entry.work_days : [];
+                  if (!shiftDays.includes(dow)) continue;
                   const [sh, sm = 0] = entry.shift_start.split(':').map(Number);
                   const [eh, em = 0] = entry.shift_end.split(':').map(Number);
                   if (cur >= sh * 60 + sm && cur < eh * 60 + em) { onShiftNow = true; break; }
@@ -1820,7 +1797,9 @@ Deno.serve(async (req) => {
             }
 
             if (!shiftStart || !shiftEnd) continue;
-            if (Array.isArray(shiftDays) && shiftDays.length > 0 && !shiftDays.includes(dowNow)) continue;
+            // No recorded working day is a day off — never a shift that runs every day.
+            if (!Array.isArray(shiftDays) || shiftDays.length === 0) continue;
+            if (!shiftDays.includes(dowNow)) continue;
             const sMin = toMin(shiftStart);
             const eMin = toMin(shiftEnd);
             if (sMin === null || eMin === null) continue;
@@ -1862,15 +1841,24 @@ Deno.serve(async (req) => {
                 workDispatchDone = true;
                 break;
               } else {
-                await writeCharacterToDestination(base44, char, workLoc.id, workLoc.name, {
-                  resolvedPresenceStatus: 'at_work',
-                  resolvedLocationType: 'work',
-                  resolvedSourceReason: `work_schedule: shift ${shiftStart}–${shiftEnd}`,
-                  nowET,
-                });
-                totalMoved++;
-                moveLog.push(`${char.name} → ${workLoc.name} [WORK_SCHEDULE]`);
-                console.log(`[autonomousMovement] ✓ ${char.name}: WORK DISPATCH → ${workLoc.name}`);
+                // Committed by the sole canonical writer, never written here: it is the one
+                // place that verifies this job's own scheduled shift today and that the
+                // actual employer's workspace is open. A closed workplace inside an open
+                // property, or a day with no shift, is refused there and not dispatched.
+                let _workAuthRes = null;
+                try {
+                  const _wir = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', { character_id: char.id, owner_email: char.owner_email, requested_presence_status: 'at_work', requested_location_id: workLoc.id, requested_source_reason: 'work_schedule', requested_authority: 'autonomousCharacterMovement', requested_timestamp: nowET.toISOString() });
+                  _workAuthRes = _wir?.data || _wir;
+                } catch (_workErr) {
+                  console.warn(`[autonomousMovement] ${char.name}: WORK DISPATCH authority failed — ${_workErr.message}`);
+                }
+                if (['accepted', 'redirected', 'modified'].includes(_workAuthRes?.disposition)) {
+                  totalMoved++;
+                  moveLog.push(`${char.name} → ${workLoc.name} [WORK_SCHEDULE]`);
+                  console.log(`[autonomousMovement] ✓ ${char.name}: WORK DISPATCH → ${workLoc.name}`);
+                } else {
+                  console.log(`[autonomousMovement] ${char.name}: WORK DISPATCH refused (${_workAuthRes?.reason || 'authority_unavailable'})`);
+                }
                 workDispatchDone = true;
                 break;
               }

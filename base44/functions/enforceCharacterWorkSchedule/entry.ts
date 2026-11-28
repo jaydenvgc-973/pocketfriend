@@ -25,6 +25,11 @@ async function generateShiftEndNarrative(base44, characterId) {
 // Handles cross-midnight shifts correctly — e.g. 17:00→01:00 spanning two calendar days.
 function isLocationShiftActiveNow(shift, nowET) {
   if (!shift?.start || !shift?.end) return false;
+  // A schedule that records no working day records no working day. An absent or empty
+  // day list is a day off — never "every day". Without this, a shift carrying only a
+  // start and end time asserted itself seven days a week, including the character's
+  // days off, and the ordinary shift end was then applied to a day with no shift.
+  if (!Array.isArray(shift.days) || shift.days.length === 0) return false;
   const nowMin = nowET.getHours() * 60 + nowET.getMinutes();
   const [sh, sm] = shift.start.split(':').map(Number);
   const [eh, em] = shift.end.split(':').map(Number);
@@ -33,16 +38,15 @@ function isLocationShiftActiveNow(shift, nowET) {
   const isCrossMidnight = endMin < startMin;
   const today = nowET.getDay();
   const yesterday = (today + 6) % 7;
-  const hasDays = shift.days && shift.days.length > 0;
 
   if (isCrossMidnight) {
     // On shift if: today is a shift day AND time >= start (e.g. 17:00→23:59 window)
     //           OR yesterday was a shift day AND time < end (e.g. 00:00→01:00 overnight window)
-    const afterStartToday = (!hasDays || shift.days.includes(today)) && nowMin >= startMin;
-    const beforeEndYesterday = (!hasDays || shift.days.includes(yesterday)) && nowMin < endMin;
+    const afterStartToday = shift.days.includes(today) && nowMin >= startMin;
+    const beforeEndYesterday = shift.days.includes(yesterday) && nowMin < endMin;
     return afterStartToday || beforeEndYesterday;
   } else {
-    if (hasDays && !shift.days.includes(today)) return false;
+    if (!shift.days.includes(today)) return false;
     return nowMin >= startMin && nowMin < endMin;
   }
 }
@@ -81,15 +85,16 @@ function isWithinShiftStartWakeWindow(shift, nowET) {
 // ── NEXT WORK EXECUTION TIME HELPERS ─────────────────────────────────────────
 function getMinutesUntilNextShiftStart(shift, clock) {
   if (!shift?.start) return null;
+  // No recorded working day means no upcoming scheduled shift — never a daily one.
+  if (!Array.isArray(shift.days) || shift.days.length === 0) return null;
   const [sh, sm] = shift.start.split(':').map(Number);
   const startMin = sh * 60 + sm;
   const nowMin = clock.getHours() * 60 + clock.getMinutes();
   const today = clock.getDay();
-  const hasDays = shift.days && shift.days.length > 0;
 
   for (let offset = 0; offset < 8; offset++) {
     const checkDay = (today + offset) % 7;
-    if (hasDays && !shift.days.includes(checkDay)) continue;
+    if (!shift.days.includes(checkDay)) continue;
 
     if (offset === 0) {
       if (startMin <= nowMin) continue;

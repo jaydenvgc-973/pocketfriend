@@ -170,15 +170,28 @@ export function getCharacterTravelAvailability(character, locationMap = {}) {
  * existing work enforcement reads, so the "until" shown is the real shift end.
  */
 function resolveWorkEnd(character, locationMap = {}) {
+  // Only a shift that actually applies TODAY has an ending time. A job's ordinary end
+  // time is never shown on a day the job records no shift for — that would present a
+  // nonexistent shift as a real obligation. No working day recorded means no end time.
+  const today = new Date(
+    new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })
+  ).getDay();
+  const appliesToday = (days) => Array.isArray(days) && days.includes(today);
+
   const jobLocIds = [
     character.occupation_location_id,
     ...(character.additional_occupation_locations || []).map((e) => e?.location_id).filter(Boolean),
   ].filter(Boolean);
   for (const locId of jobLocIds) {
     const shift = locationMap[locId]?.worker_shifts?.[character.id];
-    if (shift?.end) return shift.end;
+    if (shift?.end && appliesToday(shift.days)) return shift.end;
   }
-  return character.work_end_time || null;
+  // A job entry's own recorded hours, for a workplace with no shift record of its own.
+  for (const entry of character.additional_occupation_locations || []) {
+    const end = entry?.shift_end || entry?.work_end_time;
+    if (end && appliesToday(entry?.work_days)) return end;
+  }
+  return appliesToday(character.work_days) ? (character.work_end_time || null) : null;
 }
 
 /**
