@@ -472,6 +472,15 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime, 
   const requestedStatus = requested.requested_presence_status || null;
   const requestedLocId = requested.requested_location_id || null;
 
+  // A MANDATORY COURT APPEARANCE is a legal obligation, not ordinary travel. The court
+  // summons is the authorization for every required participant's presence at the
+  // courthouse, so the ordinary travel and movement gates below (custody, house arrest,
+  // hospitalization, institutional home) do not govern it. Only the resolved location is
+  // committed; no legal status, sentence or treatment field is ever changed by appearing,
+  // and the existing locks resume as soon as the event ends and the character is
+  // recomputed from their own record.
+  const _isCourtAppearance = requested.requested_authority === 'GovernmentVenueAttendance';
+
   // ── ACTIVE STORY EVENT VENUE AUTHORITY ──────────────────────────────────────
   // During a Story Event's active time window, the assigned venue is the
   // participating character's authoritative current location. This runs FIRST
@@ -551,7 +560,9 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime, 
   }
 
   // ── INCARCERATION / HOUSE ARREST — absolute hard lock ──────────────────────
-  if (character.is_jailed === true) {
+  // A court appearance is the one authorized exception: custody is unchanged, only the
+  // person's location for the proceeding is.
+  if (character.is_jailed === true && !_isCourtAppearance) {
     const facilityId = character.incarceration_facility_id || null;
     const facilityLoc = facilityId ? locationMap[facilityId] : null;
     const facilityName = facilityLoc?.name || character.incarceration_facility_name || 'Correctional Facility';
@@ -583,7 +594,7 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime, 
   // enough on its own; the circumstance fields do not have to be written first, and
   // nothing here invents a conviction or a medical record.
   const homeState = institutionalHomeState(character, locationMap);
-  if (homeState) {
+  if (homeState && !_isCourtAppearance) {
     if (currentStatus === homeState.presence && currentLocId === homeState.locationId) {
       return { disposition: 'no_change', canonicalFields: {} };
     }
@@ -607,7 +618,7 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime, 
     };
   }
 
-  if (character.house_arrest_active === true) {
+  if (character.house_arrest_active === true && !_isCourtAppearance) {
     const haLocId = character.house_arrest_location_id || character.current_home_location_id || null;
     const haLoc = haLocId ? locationMap[haLocId] : null;
     const haName = haLoc?.name || 'Residence (House Arrest)';
@@ -645,7 +656,9 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime, 
   // requesting a non-hospitalized presence. Work, school, visiting, and all
   // other transitions are blocked outright — the character must be discharged
   // to home first, then resume normal scheduling in a subsequent cycle.
-  if (currentStatus === 'hospitalized' && requestedStatus && requestedStatus !== 'hospitalized') {
+  // A court appearance is authorized presence, not movement out of care: the person
+  // attends from the hospital and returns to it unchanged.
+  if (!_isCourtAppearance && currentStatus === 'hospitalized' && requestedStatus && requestedStatus !== 'hospitalized') {
     if (requestedStatus !== 'home') {
       return {
         disposition: 'rejected',
@@ -1293,11 +1306,21 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime, 
     if (!destLocId) {
       return { disposition: 'rejected', canonicalFields: {}, reason: 'no_destination' };
     }
-    // Incarcerated/house-arrest/hospitalized characters cannot be relocated
-    if (character.is_jailed || character.house_arrest_active) {
+    // ── MANDATORY COURT APPEARANCE ─────────────────────────────────────────────
+    // A court summons is not a discretionary travel request: it is the legal
+    // authorization for every required participant's presence at the courthouse.
+    // Ordinary travel eligibility therefore does not govern it — custody, house
+    // arrest and hospitalization do not prevent a required appearance, and the
+    // destination does not have to sit inside this account's own travel scope.
+    // Only the resolved presence is committed here; every legal status field
+    // (is_jailed, house_arrest_active, incarceration_status, sentence, treatment)
+    // is left exactly as it was, so a person under custody remains in custody.
+    // Incarcerated/house-arrest/hospitalized characters cannot be relocated by
+    // ordinary travel. A court appearance is not ordinary travel (see above).
+    if (!_isCourtAppearance && (character.is_jailed || character.house_arrest_active)) {
       return { disposition: 'rejected', canonicalFields: {}, reason: 'confinement_block' };
     }
-    if (character.resolved_presence_status === 'hospitalized') {
+    if (!_isCourtAppearance && character.resolved_presence_status === 'hospitalized') {
       return { disposition: 'rejected', canonicalFields: {}, reason: 'hospitalized_relocation_blocked' };
     }
     // RABBIT HOLE — intentional off-screen destination positively established by
@@ -1335,7 +1358,13 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime, 
         },
       };
     }
-    const destLoc = locationMap[destLocId];
+    // The courthouse resolves from the summons itself when it is not part of this
+    // account's own location scope (a shared or cross-account venue). The summons is
+    // the authorization, so an out-of-scope venue is never a travel refusal here.
+    let destLoc = locationMap[destLocId];
+    if (!destLoc && _isCourtAppearance) {
+      destLoc = { id: destLocId, name: requested.requested_location_name || 'Courthouse' };
+    }
     if (!destLoc) {
       return { disposition: 'rejected', canonicalFields: {}, reason: 'destination_not_in_scope' };
     }
@@ -2316,6 +2345,21 @@ Deno.serve(async (req) => {
           }
         }
       } catch (_) { /* non-blocking — hospitalization will reject if no medical found */ }
+    }
+
+    // ── COURT SUMMONS DESTINATION ──────────────────────────────────────────────
+    // A mandatory court appearance authorizes presence at the designated courthouse
+    // even when that venue is shared or belongs to another account and is therefore
+    // not in this account's own location map. Load it directly so the committed
+    // location carries its real name and record instead of a bare ID.
+    const _courtDestId = payload.requested_authority === 'GovernmentVenueAttendance'
+      ? payload.requested_location_id
+      : null;
+    if (_courtDestId && !locationMap[_courtDestId]) {
+      try {
+        const rows = await base44.asServiceRole.entities.LocationReference.filter({ id: _courtDestId });
+        if (rows && rows[0]) locationMap[_courtDestId] = rows[0];
+      } catch (_) { /* the summons name is used as the fallback */ }
     }
 
     // ── EASTERN TIME (authoritative — America/New_York) ───────────────────────

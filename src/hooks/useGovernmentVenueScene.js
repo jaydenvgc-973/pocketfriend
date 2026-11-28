@@ -91,6 +91,9 @@ export default function useGovernmentVenueScene({
   // The participants whose attendance this session established. Kept in a ref so the
   // release runs from wherever the event ends — including leaving the page.
   const attendanceRef = useRef([]);
+  // Participants who were receiving hospital care when the summons brought them in, so
+  // they return to that care when the proceeding ends.
+  const hospitalizedRef = useRef([]);
   const placedForRef = useRef(null);
 
   // The destination actually on screen: the residence or workplace selected inside the
@@ -146,6 +149,16 @@ export default function useGovernmentVenueScene({
     timestamp: new Date().toISOString(),
   }]);
 
+  // A system notice is not something the room lived through. It stays visible, but it is
+  // never presented as an event that already happened in the proceeding.
+  const addNotice = (content) => setMessages((prev) => [...prev, {
+    id: `gov_notice_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    sender: "narrative",
+    content,
+    is_canon_event: false,
+    timestamp: new Date().toISOString(),
+  }]);
+
   const governmentContextBlock = courtCase
     ? buildCourtCaseContext(courtCase, { userPresent: !observeMode, userName: displayName, venueName: location?.name })
     : cityHallPlan
@@ -177,6 +190,15 @@ export default function useGovernmentVenueScene({
         remote.set(id, { location_name: actualLocationName(c) });
         return false;
       });
+      // Anyone receiving hospital care right now returns to it once the proceeding ends.
+      hospitalizedRef.current = toPlace
+        .map((id) => characters.find((c) => c.id === id))
+        .filter((c) => c?.resolved_presence_status === "hospitalized" && c?.resolved_current_location_id)
+        .map((c) => ({
+          id: c.id,
+          location_id: c.resolved_current_location_id,
+          location_name: c.resolved_current_location_name || null,
+        }));
       const { attendingIds, refused } = await placeEventAttendees({
         location, characterIds: toPlace, ownerEmail: currentUser?.email, characters,
       });
@@ -218,7 +240,7 @@ export default function useGovernmentVenueScene({
         addNarrative(`${who.join(" and ")} ${who.length === 1 ? "is" : "are"} taking part remotely. Their location, treatment and custody are unchanged.`);
       }
       const missing = refusedLine(unavailableRefusals);
-      if (missing) addNarrative(missing);
+      if (missing) addNotice(missing);
       // Being part of this proceeding becomes part of each participant's own history,
       // written from the role they actually hold. Nobody who could not attend is written.
       await recordGovernmentEventMemories({

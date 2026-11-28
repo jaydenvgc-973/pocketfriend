@@ -108,7 +108,7 @@ export async function placeEventAttendees({ location, characterIds = [], ownerEm
  * The lock release is followed by the existing recompute, so each character returns to
  * their own established schedule rather than being sent somewhere arbitrary.
  */
-export async function releaseEventAttendees({ characterIds = [], ownerEmail, characters = [] }) {
+export async function releaseEventAttendees({ characterIds = [], ownerEmail, characters = [], restoreHospitalized = [] }) {
   const ids = [...new Set((characterIds || []).filter(Boolean))];
   if (ids.length === 0) return;
 
@@ -148,4 +148,26 @@ export async function releaseEventAttendees({ characterIds = [], ownerEmail, cha
       // The bounded lock expiry releases anyone the release could not reach.
     }
   }));
+
+  // A hospitalized participant attended court and goes back to their care unchanged.
+  // The summons moved them for the proceeding only, so their hospital presence is
+  // re-established through the same authority once the event ends — care is never lost
+  // by appearing in court.
+  await Promise.all((restoreHospitalized || [])
+    .filter((h) => h?.id && h?.location_id && (ownerById.get(h.id) || ownerEmail) === ownerEmail)
+    .map(async (h) => {
+      try {
+        await base44.functions.invoke("enforceCharacterLocationPresence", {
+          character_id: h.id,
+          owner_email: ownerEmail,
+          requested_presence_status: "hospitalized",
+          requested_location_id: h.location_id,
+          requested_location_name: h.location_name,
+          requested_source_reason: "medical_emergency",
+          requested_authority: ATTENDANCE_AUTHORITY,
+        });
+      } catch {
+        // Their own record still carries their care state; nothing is discharged here.
+      }
+    }));
 }

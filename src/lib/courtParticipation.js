@@ -17,11 +17,19 @@ export function isHospitalizedCharacter(person) {
   return person?.resolved_presence_status === "hospitalized";
 }
 
-/** physical | remote_hospital | remote_custody */
+/**
+ * How this participant appears in court.
+ *
+ * A court summons is a legal obligation and the authorization for that person's
+ * presence — not ordinary travel. So every required participant is brought physically
+ * to the courthouse regardless of custody, house arrest or hospitalization, and those
+ * circumstances are never changed by appearing. (Custody and treatment remain exactly
+ * as they were; only where the person is standing for the proceeding changes.)
+ *
+ * Kept as a function so callers keep one shared reading of a participant's mode.
+ */
 export function courtParticipationMode(person) {
   if (!person) return "physical";
-  if (isHospitalizedCharacter(person)) return "remote_hospital";
-  if (isIncarceratedCharacter(person)) return "remote_custody";
   return "physical";
 }
 
