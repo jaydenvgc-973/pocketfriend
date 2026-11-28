@@ -2289,6 +2289,15 @@ Deno.serve(async (req) => {
     if (!characters || characters.length === 0) {
       characters = await base44.asServiceRole.entities.Character.filter({ id: character_id, owner_email: effectiveOwnerEmail });
     }
+    if ((!characters || characters.length === 0) && payload.requested_authority === 'GovernmentVenueAttendance') {
+      // A summoned participant is resolved by their own record ID. The summons is the
+      // authorization, so attendance never depends on which account the caller is
+      // scoped to — a juror or witness who belongs to another account still appears.
+      try {
+        const byId = await base44.asServiceRole.entities.Character.filter({ id: character_id });
+        characters = byId || [];
+      } catch (_) { /* falls through to the refusal below */ }
+    }
     if (!characters || characters.length === 0) {
       return Response.json({ error: 'Character not found or ownership mismatch', character_id }, { status: 404 });
     }
