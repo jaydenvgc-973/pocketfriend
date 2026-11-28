@@ -991,14 +991,23 @@ This must be a real message — not a command, not a description, not a meta-ins
       });
     }
 
-    // ── DETAILED VISUAL ANALYSIS FOR PROMPTLESS GALLERY IMAGE SENDS ────────────────
-    // For World Phone character-to-character sends of gallery images without original context,
-    // run rich visual analysis (not just transport metadata).
-    // Stores inferred_image_description + image_analysis_status on THIS new message only.
+    // ── VISUAL ANALYSIS FOR THE RECEIVING CHARACTER ────────────────────────────
+    // The established Chat / Text standard, reused here: the actual attachment is analyzed
+    // with vision before the character speaks, and the result is stored on THIS message so
+    // every later turn reuses it instead of analyzing the same image again.
+    // Runs only when the send carries no usable visual description of its own.
     // Never modifies the original gallery record.
-    if (isImageSend && image_url && needs_detailed_visual_analysis && !image_description) {
+    const RECEIVED_TRANSPORT_REJECT = /image sent to|photo shared|sent to [A-Z]|shared with [A-Z]|image attachment|photo attachment|uploaded image/i;
+    let recipientImageDescription = null;
+    if (isImageSend && typeof image_description === 'string') {
+      const givenDescription = image_description.trim();
+      if (givenDescription.length > 10 && !RECEIVED_TRANSPORT_REJECT.test(givenDescription)) {
+        recipientImageDescription = givenDescription;
+      }
+    }
+    if (isImageSend && image_url && !recipientImageDescription) {
       try {
-        console.log(`[sendWorldPhoneMessage] Running detailed visual analysis on promptless gallery image for msg=${savedMessage.id}`);
+        console.log(`[sendWorldPhoneMessage] Running visual analysis so the recipient can see msg=${savedMessage.id}`);
         const analysisRes = await base44.integrations.Core.InvokeLLM({
           prompt: `Provide a rich, detailed visual description of this image.
 Include ALL of the following that are visible:
@@ -1026,6 +1035,8 @@ Return ONLY the description text, nothing else.`,
             image_analysis_is_transport_metadata: true,
           }).catch(() => {});
         } else if (inferred && inferred.length > 40) {
+          // The recipient now has the actual contents of the photo for this reply.
+          recipientImageDescription = inferred;
           // Store as inferred_image_description — signals it came from post-send visual analysis
           await base44.asServiceRole.entities.Message.update(savedMessage.id, {
             inferred_image_description: inferred,
@@ -1139,13 +1150,57 @@ Return ONLY the description text, nothing else.`,
         10
       ).catch(() => []);
 
+      // ── IMAGE UNDERSTANDING — THE ESTABLISHED CHAT / TEXT STANDARD ──────────
+      // A photo is never reduced to the sender's caption. Every image in this exchange is
+      // described to the recipient from its stored visual analysis — the same fields the
+      // Chat and Text pages read — so the newest photo is understood now, and earlier
+      // photos stay understood in later turns without being analyzed again.
       const conversationLog = [
-        ...recentHistory.slice(-8).map(m => {
+        ...recentHistory.filter(m => m.id !== savedMessage.id).slice(-8).map(m => {
           const speakerName = m.sender_character_id === recipient.id ? recipient.name : sender.name;
-          return `${speakerName}: ${m.content}`;
+          if (!m.image_url) return `${speakerName}: ${m.content}`;
+          const storedImageDescription = [m.user_edited_description, m.visual_analysis_description, m.inferred_image_description, m.image_description]
+            .map(v => (typeof v === 'string' ? v.trim() : ''))
+            .find(v => v.length > 10 && !RECEIVED_TRANSPORT_REJECT.test(v)) || null;
+          const caption = (m.content || '').trim();
+          return `${speakerName}: ${caption ? `${caption} ` : ''}[sent a photo — what it shows: ${storedImageDescription || 'you could not make out what it shows'}]`;
         }),
-        `${sender.name}: ${rewrittenMessage}`,
+        isImageSend
+          ? `${sender.name}: ${rewrittenMessage ? `${rewrittenMessage} ` : ''}[sent a photo — what it shows: ${recipientImageDescription || 'you could not make out what it shows'}]`
+          : `${sender.name}: ${rewrittenMessage}`,
       ].join('\n');
+
+      // The photo the recipient is answering, stated as what they can actually see in it.
+      const receivedImageBlock = !isImageSend ? '' : recipientImageDescription
+        ? `
+
+════════════════════════════════════
+PHOTO FROM ${sender.name.toUpperCase()} — WHAT YOU CAN SEE IN IT
+════════════════════════════════════
+Visual description: ${recipientImageDescription}
+
+• ${sender.name} sent you this photo — not the user. Reply to ${sender.name}.
+• This is what you can actually see in it. React the way you naturally would, in your own voice and personality: comment on it, tease, worry, joke, compliment, criticize, or ask about a particular detail.
+• A flat acknowledgment that you received a picture is not a reply. Say something that only makes sense because you looked at it.
+• If ${sender.name} asks what you see, what someone is wearing, who is beside them, what the room or vehicle looks like, or how something looks — answer with the actual details above, not a general impression of the picture.
+• Stay strictly inside what the description shows. Never invent a detail it does not contain, and never supply a cause, explanation or backstory for what is visible: what you can see is not the same as why it happened or what it means.
+• You recognize someone in the photo only if you already know them. Anyone you do not know stays a stranger — describe them or ask who they are, and never supply a name, history or relationship you were not given.
+• A place is familiar only if you already know it. Never guess its name, address or owner from a photo.
+• You were not there. You were sent a photo — you did not witness or take part in what it shows.
+• A short reply is fine. Do not narrate a description unless that is what you would really say.`
+        : `
+
+════════════════════════════════════
+PHOTO FROM ${sender.name.toUpperCase()} — COULD NOT BE MADE OUT
+════════════════════════════════════
+${sender.name} sent you a photo, but its contents could not be made out. You may acknowledge the picture and say you cannot tell what it shows. Never describe or invent what is in it.`;
+
+      // A photo already in the thread stays discussable in later turns, from its own line.
+      const threadImageRule = (!isImageSend && recentHistory.some(m => m.image_url))
+        ? `
+
+PHOTOS ALREADY IN THIS THREAD: a line marked [sent a photo — what it shows: …] is a photo you actually received and can still see. If ${sender.name} asks what you see, what someone is wearing, who is with them or how something looks, answer from those visible details rather than a general impression, and stay strictly inside them.`
+        : '';
 
       // ── RECIPIENT IDENTITY: canonical systemPrompt (same as Chat/Text/Scene) ──
       // The canonical systemPrompt already includes CharacterMemory (Life Journal),
@@ -1175,6 +1230,7 @@ Keep it to 1-3 sentences max. Stay grounded in your life, your current situation
 
 Conversation:
 ${conversationLog}
+${receivedImageBlock}${threadImageRule}
 
 Reply as ${recipient.name} — casual, authentic, in your voice:`,
       });
@@ -1350,8 +1406,9 @@ Reply as ${recipient.name} — casual, authentic, in your voice:`,
     // fullExchangeContent is built AFTER boundary enforcement — never from a rejected reply.
     // If recipientResponse is null (boundary suppressed it), memory sync only records
     // the sender's outbound message, not the suppressed reply.
+    // The photo is remembered by what it actually showed, through the existing memory sync.
     const memoryContent = isImageSend
-      ? (image_description ? `sent a photo: ${image_description}` : 'sent a photo')
+      ? (recipientImageDescription ? `sent a photo: ${recipientImageDescription}` : 'sent a photo')
       : rewrittenMessage;
     const fullExchangeContent = (recipientResponse && recipientResponseMessageId)
       ? `${sender.name}: ${memoryContent} | ${recipient.name}: "${recipientResponse}"`
