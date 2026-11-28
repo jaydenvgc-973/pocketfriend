@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import CharacterAvatar from '@/components/chat/CharacterAvatar';
 import { isEligibleSchoolHousingResident } from '@/lib/residentialUnits';
 import StudentWorkSchedule from '@/components/location/StudentWorkSchedule';
+import AcademicWorkConflictWarning from '@/components/location/AcademicWorkConflictWarning';
 
 /**
  * SchoolEnrollmentSection — PENCIL/EDIT DROPDOWN ONLY
@@ -614,9 +615,10 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
               {academicScheduling && selectedCharIds.size > 0 && (
                 <div className="space-y-1.5">
                   {characters.filter(c => selectedCharIds.has(c.id)).map(c => (
-                    <div key={c.id} className="space-y-0.5">
+                    <div key={c.id} className="space-y-1">
                       <p className="text-xs font-medium text-foreground">{c.name}</p>
                       <StudentWorkSchedule character={c} />
+                      <AcademicWorkConflictWarning character={c} scheduleMap={enrollSchedule} />
                     </div>
                   ))}
                 </div>
@@ -972,6 +974,12 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
                       {/* Existing work assignments — shown directly under the academic
                           schedule so a class window that conflicts with a shift is visible. */}
                       {academicScheduling && <StudentWorkSchedule character={char} />}
+                      {academicScheduling && (
+                        <AcademicWorkConflictWarning
+                          character={char}
+                          scheduleMap={editFields.academic_schedule}
+                        />
+                      )}
                       <label className="flex items-center gap-2 cursor-pointer">
                         <input
                           type="checkbox"
