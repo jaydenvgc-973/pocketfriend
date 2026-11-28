@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { motion, AnimatePresence } from 'framer-motion';
 import CharacterAvatar from '@/components/chat/CharacterAvatar';
 import { isEligibleSchoolHousingResident } from '@/lib/residentialUnits';
+import StudentWorkSchedule from '@/components/location/StudentWorkSchedule';
 
 /**
  * SchoolEnrollmentSection — PENCIL/EDIT DROPDOWN ONLY
@@ -227,7 +228,6 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
             scholarship_enabled: scholarshipEnabled,
             tuition_amount: scholarshipEnabled ? 0 : (location.tuition_cost || 0),
             lives_on_campus: effectiveLivesOnCampus,
-            academic_schedule: academicSchedule || [],
             status: 'active',
           }));
 
@@ -323,7 +323,10 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
       end_date: student.end_date ? new Date(student.end_date).toISOString().slice(0, 10) : '',
       scholarship_enabled: student.scholarship_enabled || false,
       lives_on_campus: student.lives_on_campus || false,
-      academic_schedule: scheduleToDayMap(student.academic_schedule),
+      // Read from this student's own enrollment record — the location roster does not keep it.
+      academic_schedule: scheduleToDayMap(
+        studentAcademicSchedule(characters.find(c => c.id === student.character_id), location)
+      ),
     });
   };
 
@@ -350,9 +353,6 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
             scholarship_enabled: newScholarship,
             tuition_amount: newScholarship ? 0 : (location.tuition_cost || 0),
             lives_on_campus: newLivesOnCampus,
-            academic_schedule: academicScheduling
-              ? dayMapToSchedule(editFields.academic_schedule)
-              : (s.academic_schedule || []),
           }
         : s
     );
@@ -393,6 +393,10 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
         scholarship_enabled: newScholarship,
         lives_on_campus: newLivesOnCampus,
       };
+      // This student's own class days and hours belong on their enrollment record.
+      if (academicScheduling) {
+        syncFields.academic_schedule = dayMapToSchedule(editFields.academic_schedule);
+      }
 
       // Helper: patch matching enrollment entry in an array
       const patchArray = (arr) => {
@@ -409,7 +413,20 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
         return patched;
       };
 
-      const patchedEnrollments = patchArray(char.education_enrollments);
+      let patchedEnrollments = patchArray(char.education_enrollments);
+      // A student enrolled before this record existed has no entry to patch — one is
+      // created here so the schedule the user just set is not silently lost.
+      if (academicScheduling && !patchedEnrollments) {
+        patchedEnrollments = [
+          ...(Array.isArray(char.education_enrollments) ? char.education_enrollments : []),
+          {
+            location_id: location.id,
+            location_name: location.name,
+            status: 'active',
+            ...syncFields,
+          },
+        ];
+      }
       const patchedCompleted = patchArray(char.completed_education);
 
       const charUpdate = {};
@@ -575,6 +592,20 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
                 </div>
               )}
 
+              {/* Work schedules of the characters selected for this enrollment — shown
+                  directly under the academic schedule so a shift conflict is visible
+                  before enrolling. Read-only. */}
+              {academicScheduling && selectedCharIds.size > 0 && (
+                <div className="space-y-1.5">
+                  {characters.filter(c => selectedCharIds.has(c.id)).map(c => (
+                    <div key={c.id} className="space-y-0.5">
+                      <p className="text-xs font-medium text-foreground">{c.name}</p>
+                      <StudentWorkSchedule character={c} />
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {/* Character Selector */}
               <label className="text-xs text-muted-foreground uppercase tracking-wider block">
                 Select Characters ({selectedCharIds.size} selected)
@@ -712,6 +743,8 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
               const isOnCampus = student.lives_on_campus === true
                 || (!!char && isEligibleSchoolHousingResident(char, location));
               const isEditing = editingStudentId === student.character_id;
+              // This student's own class days and hours, read from their enrollment record.
+              const studentSchedule = academicScheduling ? studentAcademicSchedule(char, location) : [];
               return (
                 <div key={idx} className="bg-card border border-border rounded-xl p-3 space-y-2">
                   {/* Header row — always visible */}
@@ -772,9 +805,9 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
                       {academicScheduling && (
                         <div className="rounded-lg bg-secondary/40 px-2 py-1.5">
                           <p className="text-[9px] text-muted-foreground uppercase tracking-wider mb-0.5">Academic Schedule</p>
-                          {(student.academic_schedule || []).some(d => d && d.start_time && d.end_time) ? (
+                          {studentSchedule.some(d => d && d.start_time && d.end_time) ? (
                             <div className="space-y-0.5">
-                              {[...(student.academic_schedule || [])]
+                              {[...studentSchedule]
                                 .filter(d => d && d.start_time && d.end_time)
                                 .sort((a, b) => a.day_of_week - b.day_of_week)
                                 .map(d => (
@@ -788,6 +821,9 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
                           )}
                         </div>
                       )}
+                      {/* Existing work assignments — shown directly under the academic
+                          schedule so a class window that conflicts with a shift is visible. */}
+                      {academicScheduling && <StudentWorkSchedule character={char} />}
                       <div className="grid grid-cols-3 gap-1 mt-1">
                         <div className="bg-secondary/40 rounded-lg px-2 py-1.5">
                           <p className="text-[9px] text-muted-foreground uppercase tracking-wider mb-0.5">Enrolled</p>
@@ -917,6 +953,9 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
                           <p className="text-xs text-muted-foreground/70">Unselected days have no classes.</p>
                         </div>
                       )}
+                      {/* Existing work assignments — shown directly under the academic
+                          schedule so a class window that conflicts with a shift is visible. */}
+                      {academicScheduling && <StudentWorkSchedule character={char} />}
                       <label className="flex items-center gap-2 cursor-pointer">
                         <input
                           type="checkbox"
