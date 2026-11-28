@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { base44 } from '@/api/base44Client';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, GraduationCap, DollarSign, Award, Trash2, Home, Pencil, Check, X } from 'lucide-react';
+import { Plus, GraduationCap, DollarSign, Award, Trash2, Home, Pencil, Check, X, Clock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { motion, AnimatePresence } from 'framer-motion';
 import CharacterAvatar from '@/components/chat/CharacterAvatar';
@@ -45,6 +45,65 @@ function getResidencyMode(location) {
   return 'user_choice';
 }
 
+/**
+ * ACADEMIC SCHEDULE — colleges and universities only.
+ *
+ * Each enrolled student keeps their own class days and hours on their enrollment record.
+ * A day that is not selected has no class; an empty schedule means no schedule has been
+ * established. Neither is ever replaced by the institution's operating hours, a default
+ * week, or another student's hours.
+ */
+const ACADEMIC_SCHEDULE_SCHOOL_TYPES = ['college', 'university'];
+const ACADEMIC_DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const DEFAULT_CLASS_HOURS = { start_time: '09:00', end_time: '12:00' };
+
+function usesAcademicSchedule(location) {
+  if (!location) return false;
+  // The location's existing venue types are kept in `subtype`; `school_type` is the other
+  // existing field the same distinction can be recorded in. Either one qualifies — never
+  // both required, and no other venue type (high school, elementary, trade) does.
+  const venueTypes = [
+    ...(Array.isArray(location.subtype) ? location.subtype : []),
+    location.school_type,
+  ].map((t) => String(t || '').toLowerCase());
+  return venueTypes.some((t) => ACADEMIC_SCHEDULE_SCHOOL_TYPES.includes(t));
+}
+
+/** Stored schedule array → { dayOfWeek: { start_time, end_time } } for editing. */
+function scheduleToDayMap(schedule) {
+  const map = {};
+  for (const entry of (Array.isArray(schedule) ? schedule : [])) {
+    if (entry && entry.day_of_week != null && entry.start_time && entry.end_time) {
+      map[entry.day_of_week] = { start_time: entry.start_time, end_time: entry.end_time };
+    }
+  }
+  return map;
+}
+
+/** { dayOfWeek: { start_time, end_time } } → stored schedule array, ordered Sun→Sat. */
+function dayMapToSchedule(map) {
+  return Object.keys(map || {})
+    .map(Number)
+    .sort((a, b) => a - b)
+    .filter((day) => map[day]?.start_time && map[day]?.end_time)
+    .map((day) => ({ day_of_week: day, start_time: map[day].start_time, end_time: map[day].end_time }));
+}
+
+/** The student's own class days and hours, read from their enrollment record for this school. */
+function studentAcademicSchedule(char, location) {
+  if (!char || !location) return [];
+  const entries = Array.isArray(char.education_enrollments) ? char.education_enrollments : [];
+  const entry = entries.find((e) => e && e.status === 'active'
+    && (e.location_id === location.id || e.in_person_location_id === location.id));
+  return entry && Array.isArray(entry.academic_schedule) ? entry.academic_schedule : [];
+}
+
+function formatClassTime(time) {
+  if (!time) return '';
+  const [h, m] = time.split(':').map(Number);
+  return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`;
+}
+
 export default function SchoolEnrollmentSection({ location, onUpdate }) {
   // The same residency test the housing section uses: enrollment with campus residency,
   // or the school already being the character's home. Read only.
@@ -62,6 +121,10 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
   const [endDate, setEndDate] = useState('');
   const [enrollmentType, setEnrollmentType] = useState('full_school');
   const [enrollError, setEnrollError] = useState('');
+  // Academic schedule being established for the characters enrolled in this action.
+  // { dayOfWeek: { start_time, end_time } } — only selected days have class.
+  const [enrollSchedule, setEnrollSchedule] = useState({});
+  const academicScheduling = usesAcademicSchedule(location);
 
   const toggleChar = (id) => setSelectedCharIds(prev => {
     const next = new Set(prev);
@@ -99,6 +162,9 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
   const handleEnroll = async () => {
     if (selectedCharIds.size === 0) return;
     const resolvedCourseName = programName.trim() || location.name;
+    // College/university enrollments carry this student's own class days and hours.
+    // No schedule established here stays empty — never a default week.
+    const academicSchedule = academicScheduling ? dayMapToSchedule(enrollSchedule) : null;
     setEnrolling(true);
     setEnrollError('');
     try {
@@ -120,6 +186,7 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
           start_date: startDate || null,
           end_date: endDate || null,
           lives_on_campus: effectiveLivesOnCampus,
+          academic_schedule: academicSchedule,
         })
       ));
       const failures = results.filter(r => r.status === 'rejected');
@@ -160,6 +227,7 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
             scholarship_enabled: scholarshipEnabled,
             tuition_amount: scholarshipEnabled ? 0 : (location.tuition_cost || 0),
             lives_on_campus: effectiveLivesOnCampus,
+            academic_schedule: academicSchedule || [],
             status: 'active',
           }));
 
@@ -195,6 +263,7 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
         setStartDate('');
         setEndDate('');
         setEnrollmentType('full_school');
+        setEnrollSchedule({});
         setEnrollError('');
         onUpdate?.(updatedStudents, newResidents);
       }
@@ -254,6 +323,7 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
       end_date: student.end_date ? new Date(student.end_date).toISOString().slice(0, 10) : '',
       scholarship_enabled: student.scholarship_enabled || false,
       lives_on_campus: student.lives_on_campus || false,
+      academic_schedule: scheduleToDayMap(student.academic_schedule),
     });
   };
 
@@ -280,6 +350,9 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
             scholarship_enabled: newScholarship,
             tuition_amount: newScholarship ? 0 : (location.tuition_cost || 0),
             lives_on_campus: newLivesOnCampus,
+            academic_schedule: academicScheduling
+              ? dayMapToSchedule(editFields.academic_schedule)
+              : (s.academic_schedule || []),
           }
         : s
     );
@@ -442,6 +515,65 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
                   />
                 </div>
               </div>
+
+              {/* Academic Schedule — colleges and universities only */}
+              {academicScheduling && (
+                <div className="p-3 rounded-xl border border-border bg-card space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-primary" />
+                    <span className="text-sm font-medium text-foreground">Academic Schedule</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    This student's own class days and hours. Unselected days have no classes — the school's active hours are never used instead.
+                  </p>
+                  <div className="flex gap-1.5 flex-wrap">
+                    {ACADEMIC_DAY_LABELS.map((label, day) => {
+                      const active = enrollSchedule[day] != null;
+                      return (
+                        <button
+                          key={day}
+                          type="button"
+                          onClick={() => setEnrollSchedule(prev => {
+                            const next = { ...prev };
+                            if (next[day]) delete next[day];
+                            else next[day] = { ...DEFAULT_CLASS_HOURS };
+                            return next;
+                          })}
+                          className={`w-8 h-8 rounded-full text-xs font-medium border transition-colors ${
+                            active
+                              ? 'bg-primary text-primary-foreground border-primary'
+                              : 'bg-card border-border text-muted-foreground hover:border-primary/40'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {Object.keys(enrollSchedule).length === 0 ? (
+                    <p className="text-xs text-muted-foreground/70 italic">No class days selected — no scheduled academic attendance.</p>
+                  ) : (
+                    Object.keys(enrollSchedule).map(Number).sort((a, b) => a - b).map(day => (
+                      <div key={day} className="flex items-center gap-2">
+                        <span className="text-xs font-medium text-foreground w-8">{ACADEMIC_DAY_LABELS[day]}</span>
+                        <input
+                          type="time"
+                          value={enrollSchedule[day].start_time}
+                          onChange={e => setEnrollSchedule(prev => ({ ...prev, [day]: { ...prev[day], start_time: e.target.value } }))}
+                          className="flex-1 h-7 px-2 rounded-lg bg-background border border-border text-xs text-foreground outline-none focus:ring-1 focus:ring-primary/50"
+                        />
+                        <span className="text-xs text-muted-foreground">to</span>
+                        <input
+                          type="time"
+                          value={enrollSchedule[day].end_time}
+                          onChange={e => setEnrollSchedule(prev => ({ ...prev, [day]: { ...prev[day], end_time: e.target.value } }))}
+                          className="flex-1 h-7 px-2 rounded-lg bg-background border border-border text-xs text-foreground outline-none focus:ring-1 focus:ring-primary/50"
+                        />
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
 
               {/* Character Selector */}
               <label className="text-xs text-muted-foreground uppercase tracking-wider block">
@@ -636,6 +768,26 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
                       {student.course_name && student.course_name !== location.name && (
                         <p className="text-[10px] text-primary/80 font-medium">📚 {student.course_name}</p>
                       )}
+                      {/* Academic schedule — this student's own class days and hours */}
+                      {academicScheduling && (
+                        <div className="rounded-lg bg-secondary/40 px-2 py-1.5">
+                          <p className="text-[9px] text-muted-foreground uppercase tracking-wider mb-0.5">Academic Schedule</p>
+                          {(student.academic_schedule || []).some(d => d && d.start_time && d.end_time) ? (
+                            <div className="space-y-0.5">
+                              {[...(student.academic_schedule || [])]
+                                .filter(d => d && d.start_time && d.end_time)
+                                .sort((a, b) => a.day_of_week - b.day_of_week)
+                                .map(d => (
+                                  <p key={d.day_of_week} className="text-[10px] text-foreground font-medium">
+                                    {ACADEMIC_DAY_LABELS[d.day_of_week]} · {formatClassTime(d.start_time)}–{formatClassTime(d.end_time)}
+                                  </p>
+                                ))}
+                            </div>
+                          ) : (
+                            <p className="text-[10px] text-muted-foreground/60 italic">No classes scheduled</p>
+                          )}
+                        </div>
+                      )}
                       <div className="grid grid-cols-3 gap-1 mt-1">
                         <div className="bg-secondary/40 rounded-lg px-2 py-1.5">
                           <p className="text-[9px] text-muted-foreground uppercase tracking-wider mb-0.5">Enrolled</p>
@@ -707,6 +859,64 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
                           />
                         </div>
                       </div>
+                      {/* Academic schedule — this student's own class days and hours */}
+                      {academicScheduling && (
+                        <div className="p-2.5 rounded-xl border border-border bg-card space-y-2">
+                          <div className="flex items-center gap-2">
+                            <Clock className="w-3.5 h-3.5 text-primary" />
+                            <span className="text-xs font-medium text-foreground">Academic Schedule</span>
+                          </div>
+                          <div className="flex gap-1.5 flex-wrap">
+                            {ACADEMIC_DAY_LABELS.map((label, day) => {
+                              const active = editFields.academic_schedule?.[day] != null;
+                              return (
+                                <button
+                                  key={day}
+                                  type="button"
+                                  onClick={() => setEditFields(p => {
+                                    const next = { ...(p.academic_schedule || {}) };
+                                    if (next[day]) delete next[day];
+                                    else next[day] = { ...DEFAULT_CLASS_HOURS };
+                                    return { ...p, academic_schedule: next };
+                                  })}
+                                  className={`w-7 h-7 rounded-full text-[10px] font-medium border transition-colors ${
+                                    active
+                                      ? 'bg-primary text-primary-foreground border-primary'
+                                      : 'bg-card border-border text-muted-foreground hover:border-primary/40'
+                                  }`}
+                                >
+                                  {label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          {Object.keys(editFields.academic_schedule || {}).map(Number).sort((a, b) => a - b).map(day => (
+                            <div key={day} className="flex items-center gap-2">
+                              <span className="text-xs font-medium text-foreground w-8">{ACADEMIC_DAY_LABELS[day]}</span>
+                              <input
+                                type="time"
+                                value={editFields.academic_schedule[day].start_time}
+                                onChange={e => setEditFields(p => ({
+                                  ...p,
+                                  academic_schedule: { ...p.academic_schedule, [day]: { ...p.academic_schedule[day], start_time: e.target.value } },
+                                }))}
+                                className="flex-1 h-7 px-2 rounded-lg bg-background border border-border text-xs text-foreground outline-none focus:ring-1 focus:ring-primary/50"
+                              />
+                              <span className="text-xs text-muted-foreground">to</span>
+                              <input
+                                type="time"
+                                value={editFields.academic_schedule[day].end_time}
+                                onChange={e => setEditFields(p => ({
+                                  ...p,
+                                  academic_schedule: { ...p.academic_schedule, [day]: { ...p.academic_schedule[day], end_time: e.target.value } },
+                                }))}
+                                className="flex-1 h-7 px-2 rounded-lg bg-background border border-border text-xs text-foreground outline-none focus:ring-1 focus:ring-primary/50"
+                              />
+                            </div>
+                          ))}
+                          <p className="text-xs text-muted-foreground/70">Unselected days have no classes.</p>
+                        </div>
+                      )}
                       <label className="flex items-center gap-2 cursor-pointer">
                         <input
                           type="checkbox"

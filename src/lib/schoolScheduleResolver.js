@@ -39,6 +39,26 @@ export function hasVerifiedSchoolEnrollment(character, locationMap = {}) {
 }
 
 /**
+ * A college or university keeps an individual academic schedule per enrollment:
+ * each student's own class days and hours, stored on their enrollment record in the
+ * school's student log. Those hours are the student's academic obligation — the
+ * institution's operating hours are never substituted for them.
+ */
+const INDIVIDUAL_SCHEDULE_SCHOOL_TYPES = ['college', 'university'];
+
+export function usesIndividualAcademicSchedule(school) {
+  if (!school) return false;
+  // The location's existing venue types are kept in `subtype`; `school_type` is the
+  // other existing field the same distinction can be recorded in. Either one qualifies —
+  // never both required, and no other venue type does.
+  const venueTypes = [
+    ...(Array.isArray(school.subtype) ? school.subtype : []),
+    school.school_type,
+  ].map((t) => String(t || '').toLowerCase());
+  return venueTypes.some((t) => INDIVIDUAL_SCHEDULE_SCHOOL_TYPES.includes(t));
+}
+
+/**
  * resolveSchoolSchedule(character, dayOfWeek, locationMap)
  * 
  * Returns: { startMin, endMin, source } or { startMin: null, endMin: null, source: 'school_schedule_unresolved' }
@@ -47,6 +67,31 @@ export function resolveSchoolSchedule(character, dayOfWeek, locationMap) {
   // Enrollment is verified against the school record, not assumed from the character.
   if (!hasVerifiedSchoolEnrollment(character, locationMap)) {
     return { startMin: null, endMin: null, source: 'not_enrolled' };
+  }
+
+  const schoolLoc = character.education_location_id && locationMap
+    ? locationMap[character.education_location_id]
+    : null;
+
+  // UNIVERSITY / COLLEGE — the student's own enrollment schedule decides, and nothing
+  // else may stand in for it. A day the student's schedule does not list, a schedule that
+  // is empty, or an enrollment with no schedule at all means NO class that day. The
+  // institution's operating hours are not an academic schedule.
+  if (usesIndividualAcademicSchedule(schoolLoc)) {
+    // The student's own enrollment record for THIS school carries the class days/hours.
+    const enrollments = Array.isArray(character.education_enrollments) ? character.education_enrollments : [];
+    const entry = enrollments.find((e) => e && e.status === 'active'
+      && (e.location_id === schoolLoc.id || e.in_person_location_id === schoolLoc.id)) || null;
+    if (!entry) return { startMin: null, endMin: null, source: 'no_enrollment_record' };
+    const schedule = Array.isArray(entry.academic_schedule) ? entry.academic_schedule : [];
+    const today = schedule.find((d) => d && d.day_of_week === dayOfWeek && d.start_time && d.end_time);
+    if (!today) return { startMin: null, endMin: null, source: 'no_class_scheduled' };
+    const dayStart = toMinutes(today.start_time);
+    const dayEnd = toMinutes(today.end_time);
+    if (dayStart === null || dayEnd === null) {
+      return { startMin: null, endMin: null, source: 'no_class_scheduled' };
+    }
+    return { startMin: dayStart, endMin: dayEnd, source: 'individual_academic_schedule' };
   }
 
   // PRIORITY 1: Enrollment override times on character
@@ -62,8 +107,7 @@ export function resolveSchoolSchedule(character, dayOfWeek, locationMap) {
   }
 
   // PRIORITY 2: School location operating hours (real data from LocationReference)
-  if (character.education_location_id && locationMap && locationMap[character.education_location_id]) {
-    const schoolLoc = locationMap[character.education_location_id];
+  if (schoolLoc) {
     if (schoolLoc.operating_hours && Array.isArray(schoolLoc.operating_hours) && schoolLoc.operating_hours.length > 0) {
       // Find hours for today OR fall back to day-agnostic hours
       const todayEntries = schoolLoc.operating_hours.filter(h => h.day_of_week != null && h.day_of_week === dayOfWeek);

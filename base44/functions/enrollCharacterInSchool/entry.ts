@@ -41,6 +41,10 @@ Deno.serve(async (req) => {
       // Schedule (for in_person and remote_scheduled)
       // { days: [0-6], start_time: "HH:MM", end_time: "HH:MM" }
       schedule,
+      // Individual academic schedule for a college/university enrollment — this student's
+      // own class days and hours: [{ day_of_week, start_time, end_time }]. A day absent
+      // from the array means no class that day. Stored on the enrollment record itself.
+      academic_schedule = null,
       // What completing this unlocks
       rewards,
       // Initial progress %
@@ -169,6 +173,9 @@ Deno.serve(async (req) => {
           scholarship_enabled,
           enroll_date: new Date().toISOString(),
           lives_on_campus: effectiveLivesOnCampus,
+          // This student's own class days and hours at this school. A day absent from the
+          // array has no class; an empty array means no schedule has been established.
+          academic_schedule: Array.isArray(academic_schedule) ? academic_schedule : [],
           status: 'active',
         }
       ];

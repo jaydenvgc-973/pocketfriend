@@ -48,9 +48,50 @@ function hasVerifiedEnrollment(character, schoolLoc) {
   return log.some((s) => s && s.character_id === character.id);
 }
 
+// A college or university keeps an individual academic schedule per enrollment: each
+// student's own class days and hours on their enrollment record in the school's student
+// log. Those hours are the student's academic obligation — the institution's operating
+// hours are never substituted for them.
+const INDIVIDUAL_SCHEDULE_SCHOOL_TYPES = ['college', 'university'];
+
+function usesIndividualAcademicSchedule(schoolLoc) {
+  if (!schoolLoc) return false;
+  // The location's existing venue types are kept in `subtype`; `school_type` is the
+  // other existing field the same distinction can be recorded in. Either one qualifies.
+  const venueTypes = [
+    ...(Array.isArray(schoolLoc.subtype) ? schoolLoc.subtype : []),
+    schoolLoc.school_type,
+  ].map((t) => String(t || '').toLowerCase());
+  return venueTypes.some((t) => INDIVIDUAL_SCHEDULE_SCHOOL_TYPES.includes(t));
+}
+
+function activeEnrollmentEntry(character, schoolLoc) {
+  // The student's own enrollment record for THIS school carries the class days/hours.
+  const enrollments = Array.isArray(character.education_enrollments) ? character.education_enrollments : [];
+  return enrollments.find((e) => e && e.status === 'active'
+    && (e.location_id === schoolLoc?.id || e.in_person_location_id === schoolLoc?.id)) || null;
+}
+
 function resolveSchoolSchedule(character, dayOfWeek, schoolLoc) {
   if (!hasVerifiedEnrollment(character, schoolLoc)) {
     return { startMin: null, endMin: null, source: 'not_enrolled' };
+  }
+
+  // UNIVERSITY / COLLEGE — the student's own enrollment schedule decides, and nothing
+  // else may stand in for it. A day the schedule does not list, an empty schedule, or an
+  // enrollment with no schedule at all means NO class that day.
+  if (usesIndividualAcademicSchedule(schoolLoc)) {
+    const entry = activeEnrollmentEntry(character, schoolLoc);
+    if (!entry) return { startMin: null, endMin: null, source: 'no_enrollment_record' };
+    const schedule = Array.isArray(entry.academic_schedule) ? entry.academic_schedule : [];
+    const today = schedule.find((d) => d && d.day_of_week === dayOfWeek && d.start_time && d.end_time);
+    if (!today) return { startMin: null, endMin: null, source: 'no_class_scheduled' };
+    const dayStart = toMinutes(today.start_time);
+    const dayEnd = toMinutes(today.end_time);
+    if (dayStart === null || dayEnd === null) {
+      return { startMin: null, endMin: null, source: 'no_class_scheduled' };
+    }
+    return { startMin: dayStart, endMin: dayEnd, source: 'individual_academic_schedule' };
   }
 
   // PRIORITY 1: Enrollment override times on character
@@ -92,11 +133,19 @@ function resolveSchoolSchedule(character, dayOfWeek, schoolLoc) {
   return { startMin: null, endMin: null, source: 'school_schedule_unresolved' };
 }
 
-function getMinutesUntilNextSchoolStart(startMin, nowMin, dayOfWeek, schoolLoc) {
+function getMinutesUntilNextSchoolStart(startMin, nowMin, dayOfWeek, schoolLoc, academicSchedule = null) {
   if (startMin === null) return null;
 
   let validDays = null;
-  if (schoolLoc && schoolLoc.operating_hours && Array.isArray(schoolLoc.operating_hours)) {
+  // A university/college student's own schedule supplies both the class days and each
+  // day's own start time — never the institution's operating hours.
+  let startByDay = null;
+  if (Array.isArray(academicSchedule)) {
+    const days = academicSchedule.filter(d => d && d.start_time && d.end_time && toMinutes(d.start_time) !== null);
+    validDays = days.map(d => d.day_of_week);
+    startByDay = {};
+    for (const d of days) startByDay[d.day_of_week] = toMinutes(d.start_time);
+  } else if (schoolLoc && schoolLoc.operating_hours && Array.isArray(schoolLoc.operating_hours)) {
     const daySpecific = schoolLoc.operating_hours.filter(h => h.day_of_week != null);
     if (daySpecific.length > 0) {
       validDays = daySpecific.map(h => h.day_of_week);
@@ -107,11 +156,13 @@ function getMinutesUntilNextSchoolStart(startMin, nowMin, dayOfWeek, schoolLoc) 
     const checkDay = (dayOfWeek + offset) % 7;
     if (validDays && !validDays.includes(checkDay)) continue;
 
+    const dayStart = startByDay && startByDay[checkDay] != null ? startByDay[checkDay] : startMin;
+
     if (offset === 0) {
-      if (startMin <= nowMin) continue;
-      return startMin - nowMin;
+      if (dayStart <= nowMin) continue;
+      return dayStart - nowMin;
     } else {
-      return (1440 - nowMin) + ((offset - 1) * 1440) + startMin;
+      return (1440 - nowMin) + ((offset - 1) * 1440) + dayStart;
     }
   }
   return null;
@@ -170,14 +221,42 @@ Deno.serve(async (req) => {
         return Response.json({ updated: false, reason: 'not_enrolled', next_execution_time: null });
       }
 
+      // A university/college student's own enrollment schedule — its days are the only
+      // days with class, and each day keeps its own hours.
+      const individualEntry = usesIndividualAcademicSchedule(schoolLoc)
+        ? activeEnrollmentEntry(char, schoolLoc)
+        : null;
+      const individualSchedule = individualEntry && Array.isArray(individualEntry.academic_schedule)
+        ? individualEntry.academic_schedule
+        : null;
+
       const schedule = resolveSchoolSchedule(char, dayOfWeek, schoolLoc);
       if (schedule.startMin === null) {
+        // No class today is not an obligation. A student whose schedule has other days is
+        // still scheduled for their next real class; nobody is sent to campus otherwise.
+        if (individualSchedule) {
+          const firstStart = individualSchedule
+            .map(d => (d && d.start_time ? toMinutes(d.start_time) : null))
+            .filter(v => v !== null)
+            .sort((a, b) => a - b)[0];
+          const nextStart = firstStart === undefined
+            ? null
+            : getMinutesUntilNextSchoolStart(firstStart, nowMin, dayOfWeek, schoolLoc, individualSchedule);
+          return Response.json({
+            updated: false,
+            reason: 'no_class_scheduled',
+            next_execution_time: nextStart !== null ? new Date(now.getTime() + nextStart * 60000).toISOString() : null,
+          });
+        }
         return Response.json({ updated: false, reason: 'school_schedule_unresolved', next_execution_time: null });
       }
 
-      // Check day-of-week validity from operating hours
+      // Check day-of-week validity — from the student's own class days when the school
+      // keeps individual academic schedules, otherwise from the school's operating hours.
       let isValidDay = true;
-      if (schoolLoc && schoolLoc.operating_hours && Array.isArray(schoolLoc.operating_hours)) {
+      if (individualSchedule) {
+        isValidDay = schedule.source === 'individual_academic_schedule';
+      } else if (schoolLoc && schoolLoc.operating_hours && Array.isArray(schoolLoc.operating_hours)) {
         const daySpecific = schoolLoc.operating_hours.filter(h => h.day_of_week != null);
         if (daySpecific.length > 0) {
           isValidDay = daySpecific.some(h => h.day_of_week === dayOfWeek);
@@ -194,7 +273,7 @@ Deno.serve(async (req) => {
         if (minsToEnd <= 0) minsToEnd += 1440;
         nextExecutionTime = new Date(now.getTime() + minsToEnd * 60 * 1000).toISOString();
       } else if (schedule.startMin !== null) {
-        const minsToStart = getMinutesUntilNextSchoolStart(schedule.startMin, nowMin, dayOfWeek, schoolLoc);
+        const minsToStart = getMinutesUntilNextSchoolStart(schedule.startMin, nowMin, dayOfWeek, schoolLoc, individualSchedule);
         if (minsToStart !== null) {
           nextExecutionTime = new Date(now.getTime() + minsToStart * 60 * 1000).toISOString();
         }
@@ -223,7 +302,9 @@ Deno.serve(async (req) => {
           return Response.json({ updated: false, reason: 'stale_occurrence_superseded', expected_occurrence_time, next_execution_time: null });
         }
         let _expIsValidDay = true;
-        if (schoolLoc && schoolLoc.operating_hours && Array.isArray(schoolLoc.operating_hours)) {
+        if (individualSchedule) {
+          _expIsValidDay = _expSchedule.source === 'individual_academic_schedule';
+        } else if (schoolLoc && schoolLoc.operating_hours && Array.isArray(schoolLoc.operating_hours)) {
           const _daySpecific = schoolLoc.operating_hours.filter(h => h.day_of_week != null);
           if (_daySpecific.length > 0) {
             _expIsValidDay = _daySpecific.some(h => h.day_of_week === _expDay);
@@ -312,11 +393,20 @@ Deno.serve(async (req) => {
         schoolLoc = locs?.[0] || null;
       }
 
+      const individualEntry = usesIndividualAcademicSchedule(schoolLoc)
+        ? activeEnrollmentEntry(char, schoolLoc)
+        : null;
+      const individualSchedule = individualEntry && Array.isArray(individualEntry.academic_schedule)
+        ? individualEntry.academic_schedule
+        : null;
+
       const schedule = resolveSchoolSchedule(char, dayOfWeek, schoolLoc);
       if (schedule.startMin === null) continue;
 
       let isValidDay = true;
-      if (schoolLoc && schoolLoc.operating_hours && Array.isArray(schoolLoc.operating_hours)) {
+      if (individualSchedule) {
+        isValidDay = schedule.source === 'individual_academic_schedule';
+      } else if (schoolLoc && schoolLoc.operating_hours && Array.isArray(schoolLoc.operating_hours)) {
         const daySpecific = schoolLoc.operating_hours.filter(h => h.day_of_week != null);
         if (daySpecific.length > 0) {
           isValidDay = daySpecific.some(h => h.day_of_week === dayOfWeek);
@@ -331,7 +421,7 @@ Deno.serve(async (req) => {
         if (minsToEnd <= 0) minsToEnd += 1440;
         nextExecutionTime = new Date(now.getTime() + minsToEnd * 60 * 1000).toISOString();
       } else if (schedule.startMin !== null) {
-        const minsToStart = getMinutesUntilNextSchoolStart(schedule.startMin, nowMin, dayOfWeek, schoolLoc);
+        const minsToStart = getMinutesUntilNextSchoolStart(schedule.startMin, nowMin, dayOfWeek, schoolLoc, individualSchedule);
         if (minsToStart !== null) {
           nextExecutionTime = new Date(now.getTime() + minsToStart * 60 * 1000).toISOString();
         }

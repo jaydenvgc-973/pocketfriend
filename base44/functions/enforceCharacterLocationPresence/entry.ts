@@ -211,11 +211,46 @@ function hasVerifiedSchoolEnrollment(character, locationMap) {
   return log.some((s) => s && s.character_id === character.id);
 }
 
+// A college or university keeps an individual academic schedule per enrollment: each
+// student's own class days and hours on their enrollment record in the school's student
+// log. Those hours are the student's academic obligation — the institution's operating
+// hours are never substituted for them.
+const INDIVIDUAL_SCHEDULE_SCHOOL_TYPES = ['college', 'university'];
+
+function usesIndividualAcademicSchedule(schoolLoc) {
+  if (!schoolLoc) return false;
+  // The location's existing venue types are kept in `subtype`; `school_type` is the
+  // other existing field the same distinction can be recorded in. Either one qualifies.
+  const venueTypes = [
+    ...(Array.isArray(schoolLoc.subtype) ? schoolLoc.subtype : []),
+    schoolLoc.school_type,
+  ].map((t) => String(t || '').toLowerCase());
+  return venueTypes.some((t) => INDIVIDUAL_SCHEDULE_SCHOOL_TYPES.includes(t));
+}
+
 function isCharacterOnSchoolSchedule(character, etTime, locationMap) {
   if (!hasVerifiedSchoolEnrollment(character, locationMap)) return false;
 
   const nowMin = etTime.getHours() * 60 + etTime.getMinutes();
   const dayOfWeek = etTime.getDay();
+
+  // UNIVERSITY / COLLEGE — the student's own enrollment schedule decides, and nothing
+  // else may stand in for it. A day the schedule does not list, an empty schedule, or an
+  // enrollment with no schedule at all means NO class that day.
+  const individualSchoolLoc = locationMap?.[character.education_location_id] || null;
+  if (usesIndividualAcademicSchedule(individualSchoolLoc)) {
+    const enrollments = Array.isArray(character.education_enrollments) ? character.education_enrollments : [];
+    const entry = enrollments.find((e) => e && e.status === 'active'
+      && (e.location_id === individualSchoolLoc.id || e.in_person_location_id === individualSchoolLoc.id)) || null;
+    if (!entry) return false;
+    const schedule = Array.isArray(entry.academic_schedule) ? entry.academic_schedule : [];
+    const today = schedule.find((d) => d && d.day_of_week === dayOfWeek && d.start_time && d.end_time);
+    if (!today) return false;
+    const s = _toMinutesSchool(today.start_time);
+    const e = _toMinutesSchool(today.end_time);
+    if (s === null || e === null) return false;
+    return _isInWindowSchool(nowMin, s, e);
+  }
 
   // PRIORITY 1: Enrollment override times
   if (Array.isArray(character.education_enrollments) && character.education_enrollments.length > 0) {
