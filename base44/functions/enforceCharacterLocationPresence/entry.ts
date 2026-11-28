@@ -30,6 +30,7 @@
 // committed result — not from the original request.
 
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
+import { commitCourtAttendance } from './courtAttendance.ts';
 
 // ═════════════════════════════════════════════════════════════════════════════
 // HOSPITAL STABILIZATION — one-time amounts applied at admission commit.
@@ -2394,6 +2395,12 @@ Deno.serve(async (req) => {
       parseInt(_etMap.minute, 10),
       parseInt(_etMap.second, 10),
     ));
+
+    // ── MANDATORY COURT APPEARANCE — committed ahead of every travel gate ──────
+    const _courtAppearance = await commitCourtAttendance({
+      base44, characterId: character_id, payload, locationMap, etTime, ownerEmail: effectiveOwnerEmail,
+    });
+    if (_courtAppearance) return Response.json(_courtAppearance);
 
     // ── ACTIVE STORY EVENT VENUE ──────────────────────────────────────────────
     // Fetch the active Story Event venue for this character (if any). During

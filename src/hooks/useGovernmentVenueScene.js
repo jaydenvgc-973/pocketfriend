@@ -151,6 +151,19 @@ export default function useGovernmentVenueScene({
 
   // A system notice is not something the room lived through. It stays visible, but it is
   // never presented as an event that already happened in the proceeding.
+  /**
+   * Attendance is authoritative presence, so every surface that reads where people are
+   * must re-read it: the World Map, location cards, Who's Here and the scene's own cast
+   * pool. The scene loads its characters under its own query keys, which the presence
+   * refresh has to include — otherwise the room would be told people are present while
+   * the app still shows them elsewhere.
+   */
+  const refreshPresence = () => {
+    ["characters", "activeCharacters", "npcCharacters", "npcFictitiousRls"].forEach((key) => {
+      queryClient.invalidateQueries({ queryKey: [key] });
+    });
+  };
+
   const addNotice = (content) => setMessages((prev) => [...prev, {
     id: `gov_notice_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     sender: "narrative",
@@ -251,7 +264,7 @@ export default function useGovernmentVenueScene({
         location,
         ownerEmail: currentUser?.email,
       });
-      queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+      refreshPresence();
       return { attendanceIds: nextCase.attendance_ids, tempNpcs: resolved.tempNpcs, remoteParticipants };
     }
 
@@ -290,8 +303,10 @@ export default function useGovernmentVenueScene({
     setCourtCase(null);
     persist({ cityHallPlan: nextPlan });
     addNarrative(`City Hall — ${cityHallPurposeLabel(plan.purpose)}${plan.marriage?.spouse_a_name ? `: ${plan.marriage.spouse_a_name} and ${plan.marriage.spouse_b_name}` : ""}.`);
+    // A participant the authority could not place is a technical outcome, not something
+    // the room lived through — it is never recorded as an event that already happened.
     const missing = refusedLine(refused);
-    if (missing) addNarrative(missing);
+    if (missing) addNotice(missing);
     // Coming here for this purpose is part of each attendee's own day. A marriage is
     // remembered as the ceremony itself once it actually takes place — never before.
     const purposeLabel = cityHallPurposeLabel(plan.purpose);
@@ -312,7 +327,7 @@ export default function useGovernmentVenueScene({
       location,
       ownerEmail: currentUser?.email,
     });
-    queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+    refreshPresence();
     return { attendanceIds: attendingIds, tempNpcs: officiant ? [officiant] : [] };
   };
 
@@ -335,7 +350,7 @@ export default function useGovernmentVenueScene({
       characters,
       restoreHospitalized,
     });
-    queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+    refreshPresence();
   };
 
   /**

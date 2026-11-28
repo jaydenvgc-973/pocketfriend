@@ -757,7 +757,14 @@ export default function Scene() {
     if (!location || broughtCharacters.length === 0) return;
     // Opening the Scenes page is not an arrival. A character whose authoritative
     // location is already this place keeps their established circumstances.
-    const travelling = broughtCharacters.filter((char) => char.resolved_current_location_id !== location.id);
+    // A participant already placed at this venue by a court proceeding holds that
+    // presence under the event's own authority. Opening the scene never re-requests
+    // them as an ordinary arrival, which would be refused for someone in custody and
+    // pull them back out of the courtroom.
+    const travelling = broughtCharacters.filter((char) =>
+      char.resolved_current_location_id !== location.id
+      && char.presence_stay_lock_reason !== "government_event_attendance"
+    );
     if (travelling.length === 0) return;
     let cancelled = false;
     Promise.all(travelling.map((char) => base44.functions.invoke('enforceCharacterLocationPresence', {
