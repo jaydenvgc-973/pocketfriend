@@ -923,38 +923,38 @@ export default function Scene() {
   }, [observeMode, currentUser?.id, currentUser?.avatar_url, displayName, userPresentActors.map((c) => c.id).join(',')]);
 
   // ── THE PLACE IS POPULATED ──
-  // A public venue keeps its ordinary people while the characters are in it. Private
-  // residences and restricted/staff-only zones get none. These people are already part
-  // of the venue; nothing new is created for them.
-  const observeAmbientPopulation = useMemo(() => {
-    if (!observeMode) return [];
-    return buildBackgroundPopulation({
-      npcs: allPossibleNpcs,
-      isHomeLocation,
-      isRestrictedEnv,
-      // A dorm room, studio apartment or other private living space of the property gets
-      // no ambient population merely because it sits inside a school. The shared school
-      // zones keep theirs.
-      isPrivateSpace: isPrivateResidentialZone(location, activeZone || locationZones[0]?.zone_name),
-      activeZone: activeZone || locationZones[0]?.zone_name,
-    });
-  }, [observeMode, allPossibleNpcs.filter((n) => n.isNpc === true).map((n) => n.id).join(','), isHomeLocation, isRestrictedEnv, activeZone]);
+  // A public venue keeps its ordinary people — its staff and its patrons — whether the
+  // user is taking part or watching, and whether or not any established character is
+  // selected. Being at the location is not the same as being in the scene: none of these
+  // people is a participant, none of them speaks, and none of them is created here.
+  // Private residences and restricted/staff-only zones get none.
+  const venueAmbientPopulation = useMemo(() => buildBackgroundPopulation({
+    npcs: allPossibleNpcs,
+    isHomeLocation,
+    isRestrictedEnv,
+    // A dorm room, studio apartment or other private living space of the property gets
+    // no ambient population merely because it sits inside a school. The shared school
+    // zones keep theirs.
+    isPrivateSpace: isPrivateResidentialZone(location, activeZone || locationZones[0]?.zone_name),
+    activeZone: activeZone || locationZones[0]?.zone_name,
+  }), [allPossibleNpcs.filter((n) => n.isNpc === true).map((n) => n.id).join(','), isHomeLocation, isRestrictedEnv, activeZone, location?.id]);
 
   // Background people who support the picture. Whoever is chosen from Who's Here is
   // named first so the person being spoken to is in the frame with the real people;
   // the rest of the crowd stays behind them. They are never the main subject.
   const sceneAmbientPopulation = useMemo(() => {
-    if (observeMode) {
-      const chosen = observeCast
+    const chosen = observeMode
+      ? observeCast
         .filter((c) => c.isNpc === true && c.name)
-        .map((c) => ({ id: c.id, name: c.name, role: c.role || c.npcType || 'person' }));
-      const rest = observeAmbientPopulation.filter((a) => !chosen.some((c) => c.id === a.id));
-      return [...chosen, ...rest];
-    }
-    return selectedNpcs
-      .filter((n) => n.isNpc === true && n.name)
-      .map((n) => ({ id: n.id, name: n.name, role: n.role || n.npcType || 'person' }));
-  }, [observeMode, observeCast.map((c) => c.id).join(','), observeAmbientPopulation, selectedNpcs.map((n) => n.id).join(',')]);
+        .map((c) => ({ id: c.id, name: c.name, role: c.role || c.npcType || 'person' }))
+      : selectedNpcs
+        .filter((n) => n.isNpc === true && n.name)
+        .map((n) => ({ id: n.id, name: n.name, role: n.role || n.npcType || 'person' }));
+    // The venue's own staff and patrons come after whoever was chosen, so the person the
+    // scene is with is never pushed out of the frame by the room's ordinary people.
+    const rest = venueAmbientPopulation.filter((a) => !chosen.some((c) => c.id === a.id));
+    return [...chosen, ...rest];
+  }, [observeMode, observeCast.map((c) => c.id).join(','), venueAmbientPopulation, selectedNpcs.map((n) => n.id).join(',')]);
 
   // ── DIRECTED CHARACTER INTERACTIONS ──
   // Kiss / Flirt With / Argue With need a target the user chooses from the people who
@@ -1207,7 +1207,7 @@ export default function Scene() {
     // speak in role only and never write memories.
     const characterCast = cast.filter((c) => c.id && c.isNpc !== true && !String(c.id).startsWith("npc_"));
     const backgroundCast = cast.filter((c) => c.isNpc === true || String(c.id).startsWith("npc_"));
-    const ambientHere = observeAmbientPopulation.filter((a) => !backgroundCast.some((b) => b.id === a.id));
+    const ambientHere = venueAmbientPopulation.filter((a) => !backgroundCast.some((b) => b.id === a.id));
     // A chosen background person is enough to hold the moment on their own — they
     // speak for themselves in role, so selecting them is never just a highlight.
     if (characterCast.length === 0 && backgroundCast.length === 0) {
