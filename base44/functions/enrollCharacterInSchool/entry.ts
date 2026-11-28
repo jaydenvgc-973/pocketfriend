@@ -164,21 +164,28 @@ Deno.serve(async (req) => {
 
       // Update education_enrollments — MUST include lives_on_campus so campusResidencyGuard reads it correctly.
       // lives_on_campus is only ever true for college/university (residential school types).
-      const updatedEnrollments = [
-        ...(character.education_enrollments || []),
-        {
-          location_id,
-          location_name: school.name,
-          tuition_amount: tuitionAmount,
-          scholarship_enabled,
-          enroll_date: new Date().toISOString(),
-          lives_on_campus: effectiveLivesOnCampus,
-          // This student's own class days and hours at this school. A day absent from the
-          // array has no class; an empty array means no schedule has been established.
-          academic_schedule: Array.isArray(academic_schedule) ? academic_schedule : [],
-          status: 'active',
-        }
-      ];
+      // A student has ONE enrollment record per school. Re-enrolling after a drop updates that
+      // record instead of appending a second copy — otherwise the schedule set at enrollment
+      // lands on a record the roster never reads, and the schedule appears not to save.
+      const priorEnrollments = Array.isArray(character.education_enrollments) ? character.education_enrollments : [];
+      const priorIndex = priorEnrollments.findIndex(e =>
+        e && (e.location_id === location_id || e.in_person_location_id === location_id)
+      );
+      const enrollmentRecord = {
+        location_id,
+        location_name: school.name,
+        tuition_amount: tuitionAmount,
+        scholarship_enabled,
+        enroll_date: new Date().toISOString(),
+        lives_on_campus: effectiveLivesOnCampus,
+        // This student's own class days and hours at this school. A day absent from the
+        // array has no class; an empty array means no schedule has been established.
+        academic_schedule: Array.isArray(academic_schedule) ? academic_schedule : [],
+        status: 'active',
+      };
+      const updatedEnrollments = priorIndex === -1
+        ? [...priorEnrollments, enrollmentRecord]
+        : priorEnrollments.map((e, i) => (i === priorIndex ? { ...e, ...enrollmentRecord } : e));
       await base44.entities.Character.update(character_id, { education_enrollments: updatedEnrollments });
     }
 

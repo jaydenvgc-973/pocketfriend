@@ -401,15 +401,19 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
       // Helper: patch matching enrollment entry in an array
       const patchArray = (arr) => {
         if (!Array.isArray(arr) || arr.length === 0) return null;
-        // Match by location_id or by course_name
-        const idx = arr.findIndex(e =>
+        const matchesSchool = (e) => !!e && (
           e.location_id === location.id ||
           e.in_person_location_id === location.id ||
           (e.course_name && e.course_name === (student.course_name || location.name))
         );
+        // The ACTIVE entry is the one the roster reads, so it is the one a save must
+        // change. A previous drop/graduation leaves an older entry for the same school;
+        // patching that one saved nothing the roster could ever show.
+        let idx = arr.findIndex(e => matchesSchool(e) && e.status === 'active');
+        if (idx === -1) idx = arr.findIndex(matchesSchool);
         if (idx === -1) return null;
         const patched = [...arr];
-        patched[idx] = { ...patched[idx], ...syncFields };
+        patched[idx] = { ...patched[idx], ...syncFields, status: 'active' };
         return patched;
       };
 
