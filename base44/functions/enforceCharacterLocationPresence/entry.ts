@@ -1315,8 +1315,7 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime, 
     // Only the resolved presence is committed here; every legal status field
     // (is_jailed, house_arrest_active, incarceration_status, sentence, treatment)
     // is left exactly as it was, so a person under custody remains in custody.
-    // Incarcerated/house-arrest/hospitalized characters cannot be relocated by
-    // ordinary travel. A court appearance is not ordinary travel (see above).
+    // Ordinary travel's confinement and care gates do not apply to it (see above).
     if (!_isCourtAppearance && (character.is_jailed || character.house_arrest_active)) {
       return { disposition: 'rejected', canonicalFields: {}, reason: 'confinement_block' };
     }

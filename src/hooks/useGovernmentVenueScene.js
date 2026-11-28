@@ -323,11 +323,18 @@ export default function useGovernmentVenueScene({
    */
   const releaseAttendance = async () => {
     const ids = attendanceRef.current || [];
+    const restoreHospitalized = hospitalizedRef.current || [];
     attendanceRef.current = [];
+    hospitalizedRef.current = [];
     placedForRef.current = null;
     onEventConcluded?.();
     if (ids.length === 0 || !currentUser?.email) return;
-    await releaseEventAttendees({ characterIds: ids, ownerEmail: currentUser.email, characters });
+    await releaseEventAttendees({
+      characterIds: ids,
+      ownerEmail: currentUser.email,
+      characters,
+      restoreHospitalized,
+    });
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
   };
 
