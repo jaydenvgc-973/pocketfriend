@@ -35,6 +35,10 @@ export function useSceneSpaceImage({
 }) {
   const pendingSelectionRef = useRef(false);
   const pendingSpaceRef = useRef(false);
+  // The user's own Refresh is the one draw that corrects the picture against the scene as
+  // it now stands. It is set here, where the draw is decided, and cleared the moment that
+  // draw happens — no other draw is ever told it was a refresh.
+  const manualRefreshRef = useRef(false);
   const suspended = () => !!suspendedRef?.current;
 
   // The exact space on screen is published here, so every picture of this scene is composed
@@ -78,7 +82,9 @@ export function useSceneSpaceImage({
     if (sceneImage || isGeneratingImage) return;
     // A watched space with nobody cast in it still shows the room itself — the empty place is
     // a picture too. It is never left blank while the user is looking at it.
-    drawImage();
+    const manualRefresh = manualRefreshRef.current;
+    manualRefreshRef.current = false;
+    drawImage({ manualRefresh });
   }, [locationId, spaceKey, selectionKey, sceneImage, imageRequested, participantsReady]);
 
   /** A manual space change asks for the new space's picture — once. */
@@ -89,5 +95,18 @@ export function useSceneSpaceImage({
     setSceneImage(null);
   };
 
-  return { requestSpaceImage };
+  /**
+   * The user's own Refresh of the top picture. The cast, the space and every established
+   * circumstance are read exactly as they are at this moment; the one difference is that
+   * this draw is told the user is correcting the picture, so it is composed from the scene
+   * as it now stands rather than repeating the picture already on screen.
+   */
+  const refreshImage = () => {
+    if (suspended()) return;
+    manualRefreshRef.current = true;
+    setImageRequested(true);
+    setSceneImage(null);
+  };
+
+  return { requestSpaceImage, refreshImage };
 }

@@ -186,7 +186,11 @@ async function resolveUserWorldNames(base44, candidateNames, ownerWorldName) {
 }
 
 // ── PEOPLE BY EXACT ID (cross-account resolved by ID only, never by name) ─────
-async function resolvePeopleByIds(base44, ids) {
+// `explicitlySelected` is set only for the people the reader chose themselves in Why
+// Regenerate's character picker. Their choice is taken at its word: the record is used
+// even when it is a test character, which the novel's own discovery keeps out of its
+// cast. A classification never turns a selected person into a generic face.
+async function resolvePeopleByIds(base44, ids, { explicitlySelected = false } = {}) {
   const wanted = [...new Set((ids || []).filter(Boolean))].slice(0, 10);
   if (!wanted.length) return new Map();
   const readable = asArray(await base44.entities.Character
@@ -197,7 +201,11 @@ async function resolvePeopleByIds(base44, ids) {
     ? asArray(await recoverClient.entities.Character
       .filter({ id: { $in: missing } }, null, missing.length).catch(() => []))
     : [];
-  return new Map([...readable, ...recovered].filter(usableCharacter).map((p) => [p.id, p]));
+  const usable = (c) => usableCharacter(c) || (explicitlySelected
+    && !!c && !!c.id && !!c.name
+    && !NOVEL_DEAD_STATUS.includes(c.status)
+    && c.life_status !== 'deceased');
+  return new Map([...readable, ...recovered].filter(usable).map((p) => [p.id, p]));
 }
 
 async function resolveLocation(base44, locationId, zoneName, directImages) {

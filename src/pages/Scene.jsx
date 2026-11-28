@@ -1455,7 +1455,7 @@ export default function Scene() {
   // The ride, for the space-picture guard below (set from the ride hook further down): while
   // it is a car, no room picture may be cleared or redrawn over it.
   const rideActiveRef = useRef(null);
-  const { requestSpaceImage } = useSceneSpaceImage({
+  const { requestSpaceImage, refreshImage } = useSceneSpaceImage({
     suspendedRef: rideActiveRef,
     locationId: location?.id,
     isRabbitHole: !!location?.is_rabbit_hole,
@@ -1469,7 +1469,7 @@ export default function Scene() {
     participantsReady,
     observeMode,
     observeCastCount: observeCast.length,
-    drawImage: () => generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, strictCastOnly: observeMode, ambientPopulation: sceneAmbientPopulation }),
+    drawImage: (opts) => generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, strictCastOnly: observeMode, ambientPopulation: sceneAmbientPopulation, manualRefresh: opts?.manualRefresh === true }),
   });
 
   useEffect(() => { if (hasUserRequestedImage) return; if (!location || location.is_rabbit_hole) return; if (characterIds.length > 0 && broughtCharacters.length < characterIds.length) return; setHasUserRequestedImage(true); }, [hasUserRequestedImage, location?.id, location?.is_rabbit_hole, broughtCharacters.length, characterIds.length]);
@@ -2098,8 +2098,7 @@ export default function Scene() {
   // Take a Ride: the car becomes the scene, and the ride ends at the destination already chosen.
   const { ride, handleRideConfirm, handleArriveAtDestination, buildRideShot } = useSceneRide({
     drawImage: (opts) => generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, ...opts }),
-    location, nextSceneParticipants, currentUser, displayName, observeMode, setMessages, handleNextSceneConfirm,
-  });
+    location, nextSceneParticipants, currentUser, displayName, observeMode, setMessages, handleNextSceneConfirm });
   // The space-picture guard reads this: a ride suspends every room redraw.
   rideActiveRef.current = ride;
 
@@ -2289,7 +2288,7 @@ export default function Scene() {
         if (zoneName === (activeZone || locationZones[0]?.zone_name)) return;
         setActiveZone(zoneName);
         requestSpaceImage();
-      }} sceneImage={sceneImage} isGeneratingImage={isGeneratingImage} onRefresh={() => { setHasUserRequestedImage(true); setSceneImage(null); }} onLightbox={setLightboxSrc}
+      }} sceneImage={sceneImage} isGeneratingImage={isGeneratingImage} onRefresh={refreshImage} onLightbox={setLightboxSrc}
         watchVideoActive={watchVideoActive} onToggleWatchVideo={() => { setWatchVideoActive(false); setWatchContext(null); }} watchContext={watchContext} displayName={displayName}
         onWatchStarted={(ctx) => { setWatchContext(ctx); const who = observeMode ? (observeCast.map((c) => c.name).join(" and ") || "They") : displayName; setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `${who} started watching${ctx.title ? ` "${ctx.title}"` : " a video"} together${observeMode ? "" : " with everyone"}.`, timestamp: new Date().toISOString() }]); }}
         onWatchAnalysisComplete={({ linkAnalysisContext, linkData, title }) => { setWatchContext((prev) => ({ ...prev, linkAnalysisContext, title: title || prev?.title })); if (linkData?.title && !title) setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `Now playing: ${linkData.title}.`, timestamp: new Date().toISOString() }]); }}

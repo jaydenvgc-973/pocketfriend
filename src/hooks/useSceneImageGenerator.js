@@ -104,6 +104,9 @@ export function useSceneImageGenerator({ transcript = [], getActiveSpace = null 
       locationMap,
       actionOverridePrompt = null,
       strictCastOnly = false,
+      // The user's own Refresh of the top picture. Only this draw is composed from the
+      // scene as it now stands; every automatic draw is left exactly as it was.
+      manualRefresh = false,
       // The exact people the chosen action involves (acting participant + chosen target).
       // When present, they are the cast of the image — the action is never rendered
       // without the person it was aimed at.
@@ -287,7 +290,34 @@ export function useSceneImageGenerator({ transcript = [], getActiveSpace = null 
     // of this place. Empty string at any other location.
     const jailAttireBlock = buildJailAttireBlock(finalParticipants, location, { shower: showerState, zoneName: currentZoneForAction?.zone_name || activeZone || null });
 
-    const identityPrefix = `${FICTIONAL_CHARACTER_DECLARATION}${CAUCASIAN_DEFAULT_PROHIBITION}${nameRefKey}${jailAttireBlock}`;
+    // ── MANUAL REFRESH: THE SCENE AS IT NOW STANDS ──
+    // Only the user's own Refresh reaches this. It reads the scene's own transcript — the
+    // narrative and the lines already spoken — and states what has been established, so a
+    // refresh corrects the picture instead of drawing the same outdated moment again.
+    // Nothing is stored: the transcript it is read from is the scene's own. Automatic
+    // generation never sees this block.
+    const manualRefreshBlock = !manualRefresh ? '' : (() => {
+      const record = (Array.isArray(transcriptRef.current) ? transcriptRef.current : [])
+        .filter((m) => m && typeof m.content === 'string' && m.content.trim())
+        .map((m) => {
+          const text = m.content.trim();
+          if (m.sender === 'narrative') return `Narrated: ${text}`;
+          if (m.sender === 'activity') return `Performed: ${text}`;
+          if (m.sender === 'user') return null;
+          // A question, a plan or a possibility is never something happening now.
+          if (/\?\s*$/.test(text)) return null;
+          if (/\b(might|maybe|could|probably|should|would|if|going to|later|tomorrow|yesterday|used to|wish|wonder|thinking about|planning)\b/i.test(text)) return null;
+          return `${m.senderName || 'Someone'}: ${text}`;
+        })
+        .filter(Boolean)
+        .slice(-14)
+        .join('\n');
+      const namesHere = finalParticipants.map((p) => p.name).filter(Boolean);
+      const who = namesHere.length ? namesHere.join(', ') : 'nobody';
+      return `\n═══════════════════════════════════════════════════════════\nTHIS SCENE AS IT NOW STANDS — THE PICTURE MUST MATCH IT\n═══════════════════════════════════════════════════════════\nThe person looking at this picture is correcting it, not asking for the same picture again. The record below is what this scene has already established, oldest first, most recent last. Draw the circumstances it describes as they now stand.\n${record}\n⛔ The ONLY people in this picture: ${who}. Anyone else the record names — someone who went home, someone who left, someone being talked about, someone wished for — is NOT here. Never draw them, not even in the background.\n⛔ The specific arrangement, furniture, objects and equipment the record names are the ones in use, exactly as described. Never substitute the generic setting associated with an activity: a blanket on the grass is not a picnic table, a couch is not a bed, the floor is not a dining table, a basin is not a shower. A table that exists in the place may remain in the room, but the people are where the record puts them.\n⛔ A past event, a plan, a possibility, a question or a reference to somebody absent is never something happening now.\n⛔ An earlier picture of this scene is NOT a reference. If it shows something the record has since changed — a garment now off, a position now different, a person now gone — the record wins.\n`;
+    })();
+
+    const identityPrefix = `${FICTIONAL_CHARACTER_DECLARATION}${CAUCASIAN_DEFAULT_PROHIBITION}${nameRefKey}${jailAttireBlock}${manualRefreshBlock}`;
 
     // ── BACKGROUND POPULATION ──
     // A public venue is populated when characters are in it. The named people stay the
