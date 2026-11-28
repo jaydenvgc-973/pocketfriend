@@ -9,6 +9,10 @@ import {
   isOwnAccountCharacter,
 } from "@/lib/governmentCrossAccountCharacters";
 
+// Character types that are real records and may take a courtroom role. npc_regular is
+// the world's regular NPCs; the others are the account's own NPC records.
+const NPC_COURT_TYPES = ["npc_regular", "npc_fictitious", "npc_family_member", "npc_world_service"];
+
 /**
  * GovernmentVenueSetupModal — establishes what a City Hall or Courthouse visit is
  * before the scene begins. It is a setup, not a decision: nothing official happens
@@ -61,9 +65,15 @@ export default function GovernmentVenueSetupModal({
     setRoles({});
   }, [open, venueType]);
 
+  // A regular NPC is a real character record with a real presence — living somewhere,
+  // holding a job, physically in places. Its NPC type is never a reason to be missing
+  // from a court proceeding, so the NPC character types are accepted here exactly like
+  // an active character. Only the synthetic stand-ins (npc_-prefixed ids with no record)
+  // stay out, because they cannot hold a role or testify.
   const eligible = useMemo(
     () => (characters || []).filter((c) =>
-      c?.id && !c.isNpc && !String(c.id).startsWith("npc_")
+      c?.id && !String(c.id).startsWith("npc_")
+      && (c.isNpc !== true || NPC_COURT_TYPES.includes(c.character_type))
       && !["deleted", "soft_deleted", "merged", "deceased"].includes(c.status)
       && c.life_status !== "deceased"
     ),

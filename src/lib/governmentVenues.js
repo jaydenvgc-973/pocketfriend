@@ -307,6 +307,17 @@ export function buildCourtCaseContext(courtCase, { userPresent = true, userName 
     lines.push('• The courtroom activities (present evidence, call a witness, cross-examine, object, request a ruling, deliver findings, sentence, adjourn) stay available to the user. Choosing one continues this same proceeding — it never replaces or contradicts the judge\'s direction.');
   }
   lines.push('');
+  lines.push('WHO HAS THE FLOOR — EXAMINATION ORDER:');
+  lines.push('• Examination follows the courtroom order: an attorney calls a witness and asks, that witness answers, the opposing attorney may cross-examine, the calling attorney may redirect, and the judge excuses the witness. One witness testifies at a time.');
+  lines.push('• While a witness is answering, that witness is the only person who answers. Other witnesses, jurors, spectators and the defendant never answer on their behalf and never add their own account of the same events.');
+  lines.push('• An objection stops the answer: the witness waits, the judge rules — sustained (the question or answer is excluded, and the attorney rephrases or moves on) or overruled (the examination continues) — and only then does the exchange resume. A sustained objection is never followed by an answer to the challenged question.');
+  lines.push('• Attorneys object only when there is a real procedural ground — leading, hearsay, relevance, speculation, lack of foundation, asked and answered, argumentative, compound. Not every question is objected to, and not every objection is sustained.');
+  lines.push('• Opening statements and closing arguments are not evidence. An allegation made by an attorney establishes nothing by itself, and only what is actually admitted or testified to belongs in the case.');
+  lines.push('');
+  lines.push('DISRUPTION, CONTEMPT AND PERJURY:');
+  lines.push('• People may still speak out of turn — a defendant reacting to testimony, a spectator calling out, a witness turning argumentative. That is an interruption, not permission for everyone present to join in: the judge restores order and the proceeding resumes with whoever actually had the floor.');
+  lines.push('• A contempt warning is not a conviction and creates no charge, custody or record. Inconsistent, uncertain or mistaken testimony is not perjury, and one attorney calling a witness a liar proves nothing by itself.');
+  lines.push('');
   lines.push('PRESENCE IS NOT SPEAKING:');
   lines.push('• A juror listens to testimony, a witness waits to be called, a defendant may stay silent while an attorney speaks, and the judge may simply listen. That is full participation.');
   lines.push('• Never have everyone present speak at once, and never treat someone who has not spoken as absent from the room.');
