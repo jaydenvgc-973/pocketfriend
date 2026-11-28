@@ -14,6 +14,9 @@ import {
 import { placeEventAttendees, releaseEventAttendees, attendanceRefusalLabel } from "@/lib/governmentAttendance";
 import { courtParticipationMode, isRemoteRefusal, actualLocationName } from "@/lib/courtParticipation";
 import { recordGovernmentEventMemories, easternDateLabel } from "@/lib/governmentEventMemory";
+import { getActiveSceneSpaceId } from "@/lib/activeSceneSpace";
+import { getWorkplaceById } from "@/lib/locationWorkspaces";
+import { getUnitById } from "@/lib/residentialUnits";
 
 // What each person's own part in a proceeding was. Their memory is written from this,
 // never from another participant's private knowledge.
@@ -90,8 +93,20 @@ export default function useGovernmentVenueScene({
   const attendanceRef = useRef([]);
   const placedForRef = useRef(null);
 
-  const governmentVenueType = getGovernmentVenueType(location);
-  const storageKey = locationId ? `gov_scene_${locationId}` : null;
+  // The destination actually on screen: the residence or workplace selected inside the
+  // property, when there is one. It — not the property that merely contains it — decides
+  // whether this is a courthouse or City Hall. Published by the Scenes page on the same
+  // render, before this runs.
+  const destinationSpaceId = getActiveSceneSpaceId();
+  const destinationSpace = destinationSpaceId
+    ? (getWorkplaceById(location, destinationSpaceId) || getUnitById(location, destinationSpaceId))
+    : null;
+  const governmentVenueType = getGovernmentVenueType(location, destinationSpace);
+  // The destination itself — the venue and the space inside it that is on screen. Moving
+  // from an apartment to the courthouse within the same property is a new arrival at a
+  // new destination; changing zones inside one venue is not.
+  const destinationKey = locationId ? `${locationId}|${destinationSpaceId || ''}` : null;
+  const storageKey = destinationKey ? `gov_scene_${destinationKey}` : null;
 
   const persist = (payload) => {
     try { if (storageKey) sessionStorage.setItem(storageKey, JSON.stringify(payload)); } catch { /* session only */ }
@@ -108,13 +123,18 @@ export default function useGovernmentVenueScene({
     try { sessionStorage.removeItem(storageKey); } catch { /* session only */ }
   }, [storageKey]);
 
-  // A new visit asks what it is for — once, before the scene begins.
+  // A new visit asks what it is for — once per arrival. The arrival is the destination
+  // actually selected, so entering the courthouse from an apartment in the same property
+  // asks again, while dismissing the setup and staying there never reopens it.
   useEffect(() => {
-    if (!location?.id || !governmentVenueType) return;
-    if (promptedRef.current === location.id) return;
-    promptedRef.current = location.id;
+    if (!destinationKey) return;
+    // Anywhere that is not a government venue releases the arrival, so coming back to the
+    // courthouse or City Hall later is a new visit and asks again.
+    if (!governmentVenueType) { promptedRef.current = null; return; }
+    if (promptedRef.current === destinationKey) return;
+    promptedRef.current = destinationKey;
     setShowVenueSetup(true);
-  }, [location?.id, governmentVenueType]);
+  }, [destinationKey, governmentVenueType]);
 
   // These lines are events the room has already lived through, so they stay canon:
   // every later continuation builds on them instead of discovering them again.

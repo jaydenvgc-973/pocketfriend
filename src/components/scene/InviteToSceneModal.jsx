@@ -1,22 +1,30 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, UserPlus, Loader2, Check, Clock, HelpCircle, XCircle, AlertTriangle, RefreshCw } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { fetchUnifiedRoster, getInitial } from "@/lib/unifiedRosterUtils";
+import { resolveCharacterContacts } from "@/lib/characterContactsResolver";
+import { getSceneObserveCast } from "@/lib/sceneObserveCast";
+import { isInfantCharacter } from "@/lib/characterAgeStage";
+import { inviteRestrictionFor, resolveParentIds } from "@/lib/sceneInviteEligibility";
 
 const DECISION_CONFIG = {
   coming_now: { icon: Check, color: "text-emerald-400", label: "On their way!" },
   coming_later: { icon: Clock, color: "text-amber-400", label: "Coming later" },
   maybe: { icon: HelpCircle, color: "text-yellow-400", label: "Maybe" },
   declined: { icon: XCircle, color: "text-red-400", label: "Can't make it" },
+  // A baby is never invited on their own: they come with a parent, or stay behind.
+  with_parent: { icon: Check, color: "text-emerald-400", label: "Coming with a parent" },
+  staying: { icon: Clock, color: "text-muted-foreground", label: "Staying behind" },
 };
 
-function InviteeRow({ person, isSelected, onToggle }) {
+function InviteeRow({ person, isSelected, onToggle, restriction = null }) {
   return (
     <button
-      onClick={() => onToggle(person)}
-      className={`w-full flex items-center gap-3 px-3 py-2.5 hover:bg-secondary transition-colors text-left ${isSelected ? "bg-primary/10" : ""}`}
+      onClick={() => { if (!restriction) onToggle(person); }}
+      disabled={!!restriction}
+      className={`w-full flex items-center gap-3 px-3 py-2.5 transition-colors text-left ${restriction ? "opacity-60 cursor-not-allowed" : "hover:bg-secondary"} ${isSelected ? "bg-primary/10" : ""}`}
     >
       <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors ${isSelected ? "bg-primary border-primary" : "border-border"}`}>
         {isSelected && <Check className="w-3 h-3 text-white" />}
@@ -30,6 +38,8 @@ function InviteeRow({ person, isSelected, onToggle }) {
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium text-foreground truncate">{person.name}</p>
         {person.subtitle && <p className="text-[10px] text-muted-foreground">{person.subtitle}</p>}
+        {/* Why this person cannot be selected right now — never who else knows them. */}
+        {restriction && <p className="text-[10px] text-amber-400/90 mt-0.5">{restriction}</p>}
       </div>
     </button>
   );
@@ -87,6 +97,19 @@ export default function InviteToSceneModal({ isOpen, onClose, location, characte
   const [roster, setRoster] = useState([]);
   const [loadStatus, setLoadStatus] = useState('idle'); // 'idle'|'loading'|'fresh'|'error'|'user_only'
   const [repairDiagnostics, setRepairDiagnostics] = useState([]);
+  const [ownerEmail, setOwnerEmail] = useState(null);
+  // Who the selected participants already know, read from the established contact graph.
+  const [known, setKnown] = useState({ ids: new Set(), names: new Set() });
+
+  // Taking part or watching — the same participation state the Scenes page reads. Opening
+  // the page never counts as being present.
+  const observeMode = new URLSearchParams(window.location.search).get("observe") === "1";
+
+  const recordsById = useMemo(
+    () => new Map((characters || []).filter((c) => c?.id).map((c) => [c.id, c])),
+    [characters]
+  );
+  const recordFor = (person) => recordsById.get(person?.canonical_person_id) || null;
 
   useEffect(() => {
     if (!isOpen) return;
@@ -96,6 +119,7 @@ export default function InviteToSceneModal({ isOpen, onClose, location, characte
     base44.auth.me()
       .then(user => {
         if (!user?.email || cancelled) return;
+        setOwnerEmail(user.email);
         return fetchUnifiedRoster(base44, user.email)
           .then(({ roster: r, repairDiagnostics: diag }) => {
             if (cancelled) return;
@@ -132,6 +156,71 @@ export default function InviteToSceneModal({ isOpen, onClose, location, characte
     return () => { cancelled = true; };
   }, [isOpen]);
 
+  // WHO THE SCENE ALREADY KNOWS — only the participants currently selected in this
+  // observed moment. Their established contacts (family, relationships, people in their
+  // world, verified conversations) are the same contact graph the app already uses; no
+  // relationship is added, inferred or scored here.
+  const selectedParticipants = observeMode ? getSceneObserveCast() : [];
+  const participantIds = selectedParticipants
+    .filter((p) => p?.id && !p.isNpc && !String(p.id).startsWith("npc_"))
+    .map((p) => p.id);
+  const participantKey = participantIds.join(",");
+
+  useEffect(() => {
+    if (!isOpen || !observeMode || !ownerEmail || participantIds.length === 0) {
+      setKnown({ ids: new Set(), names: new Set() });
+      return;
+    }
+    let cancelled = false;
+    Promise.all(
+      selectedParticipants
+        .filter((p) => participantIds.includes(p.id))
+        .map((p) => resolveCharacterContacts(p, ownerEmail).catch(() => []))
+    ).then((lists) => {
+      if (cancelled) return;
+      const ids = new Set();
+      const names = new Set();
+      lists.flat().forEach((contact) => {
+        if (contact?.related_character_id) ids.add(contact.related_character_id);
+        else if (contact?.person_name) names.add(contact.person_name.trim().toLowerCase());
+      });
+      setKnown({ ids, names });
+    });
+    return () => { cancelled = true; };
+  }, [isOpen, observeMode, ownerEmail, participantKey]);
+
+  const selectedIdSet = useMemo(
+    () => new Set(selected.map((p) => p.canonical_person_id)),
+    [selected]
+  );
+
+  // Eligibility is derived from the current selection and the current cast on every
+  // render — never remembered — so selecting or deselecting a participant, switching
+  // between taking part and observing, or selecting a parent takes effect immediately.
+  const restrictions = useMemo(() => {
+    const map = new Map();
+    for (const entry of roster) {
+      map.set(entry.canonical_person_id, inviteRestrictionFor({
+        person: entry,
+        record: recordsById.get(entry.canonical_person_id) || null,
+        observeMode,
+        selectedIds: selectedIdSet,
+        knownIds: known.ids,
+        knownNames: known.names,
+        characters: characters || [],
+      }));
+    }
+    return map;
+  }, [roster, recordsById, observeMode, selectedIdSet, known, characters]);
+
+  // A selection that has stopped being valid — a baby whose last selected parent was just
+  // removed — is dropped at once, so it can never be submitted.
+  useEffect(() => {
+    if (selected.length === 0) return;
+    if (!selected.some((p) => restrictions.get(p.canonical_person_id))) return;
+    setSelected((prev) => prev.filter((p) => !restrictions.get(p.canonical_person_id)));
+  }, [restrictions]);
+
   const handleRetry = () => {
     setRoster([]);
     setRepairDiagnostics([]);
@@ -162,13 +251,29 @@ export default function InviteToSceneModal({ isOpen, onClose, location, characte
     setSending(true);
     const inviteResults = [];
 
-    for (const person of selected) {
+    // Anything that stopped being eligible is never submitted.
+    const eligible = selected.filter((p) => !restrictions.get(p.canonical_person_id));
+    // A baby is never invited on their own: they are asked for through a selected parent,
+    // who decides — with their own words — whether to bring them.
+    const babies = eligible.filter((p) => isInfantCharacter(recordFor(p) || p));
+    const adults = eligible.filter((p) => !isInfantCharacter(recordFor(p) || p));
+    const babyParents = new Map(babies.map((b) => [
+      b.canonical_person_id,
+      resolveParentIds(recordFor(b) || b, characters || []),
+    ]));
+    const broughtBy = new Map();
+
+    for (const person of adults) {
       // CANONICAL CONTRACT: only pass real canonical_person_id — never a synthetic ID
       const canonicalId = person.canonical_person_id;
       if (!canonicalId || canonicalId.startsWith('npc_') || canonicalId === '__user__') {
         console.warn('[InviteToSceneModal] BLOCKED: attempted to invite non-canonical person:', person.name, canonicalId);
         continue;
       }
+
+      const accompanying = babies
+        .filter((b) => (babyParents.get(b.canonical_person_id) || []).includes(canonicalId))
+        .map((b) => b.canonical_person_id);
 
       try {
         const res = await base44.functions.invoke('inviteCharacterToLocation', {
@@ -182,6 +287,9 @@ export default function InviteToSceneModal({ isOpen, onClose, location, characte
           // When a character is at the location without the user, the invitation is theirs.
           inviterName: initiator?.name || null,
           inviterCharacterId: initiator?.id || null,
+          // Their own baby is part of this invitation, and whether they come along is
+          // part of the parent's own answer.
+          accompanyingCharacterIds: accompanying,
         });
         const data = res?.data || {};
         inviteResults.push({
@@ -192,6 +300,10 @@ export default function InviteToSceneModal({ isOpen, onClose, location, characte
           response_text: data.response_text || `${person.name} doesn't respond.`,
           inviteeId: canonicalId,
         });
+
+        if (data.bringing_accompanying && ['coming_now', 'coming_later'].includes(data.decision)) {
+          accompanying.forEach((id) => broughtBy.set(id, person.name));
+        }
 
         // If coming now, notify parent so they can add to scene
         if (data.decision === 'coming_now' && onCharacterArrived) {
@@ -210,6 +322,31 @@ export default function InviteToSceneModal({ isOpen, onClose, location, characte
           decision: 'declined',
           delay_minutes: 0,
           response_text: `${person.name} doesn't respond.`,
+        });
+      }
+    }
+
+    // The baby's outcome is their parent's outcome — never a decision of their own.
+    for (const baby of babies) {
+      const parentName = broughtBy.get(baby.canonical_person_id);
+      inviteResults.push({
+        inviteeName: baby.name,
+        avatar_url: baby.avatar_url,
+        decision: parentName ? 'with_parent' : 'staying',
+        delay_minutes: 0,
+        response_text: parentName
+          ? `${parentName} is bringing them along.`
+          : `Staying behind — no parent is bringing them this time.`,
+        inviteeId: baby.canonical_person_id,
+      });
+      if (parentName && onCharacterArrived) {
+        const babyRecord = recordFor(baby) || {};
+        onCharacterArrived({
+          id: baby.canonical_person_id,
+          name: baby.name,
+          avatar_url: baby.avatar_url,
+          character_type: baby.character_type,
+          personality_summary: babyRecord.appearance_notes || '',
         });
       }
     }
@@ -335,6 +472,7 @@ export default function InviteToSceneModal({ isOpen, onClose, location, characte
                               }}
                               isSelected={!!selected.find(p => p.canonical_person_id === entry.canonical_person_id)}
                               onToggle={togglePerson}
+                              restriction={restrictions.get(entry.canonical_person_id) || null}
                             />
                           ))}
                         </>
@@ -358,6 +496,7 @@ export default function InviteToSceneModal({ isOpen, onClose, location, characte
                               }}
                               isSelected={!!selected.find(p => p.canonical_person_id === entry.canonical_person_id)}
                               onToggle={togglePerson}
+                              restriction={restrictions.get(entry.canonical_person_id) || null}
                             />
                           ))}
                         </>

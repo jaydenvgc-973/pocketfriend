@@ -12,7 +12,7 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { inviteeId, inviteeName, inviteeType, locationId, locationName, locationCategory, userDisplayName, inviterName, inviterCharacterId } = await req.json();
+    const { inviteeId, inviteeName, inviteeType, locationId, locationName, locationCategory, userDisplayName, inviterName, inviterCharacterId, accompanyingCharacterIds } = await req.json();
 
     if (!locationId || !locationName) {
       return Response.json({ error: 'Missing locationId or locationName' }, { status: 400 });
@@ -32,6 +32,20 @@ Deno.serve(async (req) => {
         error: `${invitee.name} is deceased and cannot be invited.`,
         reason: 'deceased',
       }, { status: 409 });
+    }
+
+    // A baby is never invited on their own. They are part of a parent's invitation, and
+    // whether they come along is part of that parent's own answer — so the baby is read
+    // here as an accompanying person, never as an invitee with a decision of their own.
+    const accompanyingIds = Array.isArray(accompanyingCharacterIds)
+      ? accompanyingCharacterIds.filter((id: any) => typeof id === 'string' && id)
+      : [];
+    let accompanying: any[] = [];
+    if (accompanyingIds.length > 0) {
+      const roster = await base44.asServiceRole.entities.Character.list('-updated_date', 1000);
+      accompanying = accompanyingIds
+        .map((id: string) => roster.find((c: any) => c.id === id))
+        .filter((c: any) => !!c);
     }
 
     // Authoritative application time is Eastern. Server time is never used to decide
@@ -115,6 +129,9 @@ Deno.serve(async (req) => {
       currentLocationName ? `Current location: ${currentLocationName}` : '',
       `Invited to: ${locationName} (${locationCategory || 'unknown type'})`,
       `Invited by: ${inviterName || userDisplayName || 'the user'}`,
+      accompanying.length > 0
+        ? `In ${name}'s care right now: ${accompanying.map((a: any) => a.name).join(', ')} (their baby). If ${name} comes, ${name} alone decides whether the baby comes with them.`
+        : '',
     ].filter(Boolean).join('\n');
 
     const result = await base44.asServiceRole.integrations.Core.InvokeLLM({

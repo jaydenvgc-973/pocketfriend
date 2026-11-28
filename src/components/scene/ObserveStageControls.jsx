@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Eye, Play, Send, MessageSquare, Wand2, BookOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import ObserveCastPicker from "@/components/scene/ObserveCastPicker";
+import { setSceneObserveCast } from "@/lib/sceneObserveCast";
 
 /**
  * ObserveStageControls
@@ -17,6 +18,9 @@ export default function ObserveStageControls({ candidates, castIds, onToggleCast
   const [speakAsId, setSpeakAsId] = useState(null);
 
   const cast = (candidates || []).filter((c) => castIds.includes(c.id));
+  // The people in this moment, published for the invitation list: only they can vouch
+  // for someone being invited while the observer watches.
+  setSceneObserveCast(cast);
   // An inmate speaks for themselves like anyone else: incarceration never removes a
   // person from Speak As. That includes the facility's own background inmate.
   const isInmate = (c) => /inmate|prisoner|detainee/i.test(String(c.role || ""));

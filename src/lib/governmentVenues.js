@@ -17,24 +17,47 @@ import { actualLocationName } from "./courtParticipation";
 const normalize = (v) => String(v || '').toLowerCase().replace(/[\s\-&]+/g, '_').replace(/_+/g, '_');
 
 /**
- * 'courthouse' | 'city_hall' | null — from the venue's own name and identity first, then
- * its subtype. A venue that carries both subtypes (a City Hall that also holds a
- * courthouse) is the place its own name says it is, so its visit opens the right setup.
+ * Everything one place says about itself: its name and identity first, then the types
+ * it carries. For a space inside a property this is the space's own name and business
+ * types — never the property's.
  */
-export function getGovernmentVenueType(location) {
-  if (!location) return null;
-  const identity = String(location.venue_identity || '').toLowerCase();
-  const name = String(location.name || '').toLowerCase();
-  const haystack = `${identity} ${name}`;
-  if (haystack.includes('city hall') || haystack.includes('cityhall')) return 'city_hall';
-  if (haystack.includes('courthouse') || haystack.includes('court house')) return 'courthouse';
+function identityOf(place) {
+  if (!place) return '';
+  const types = [
+    ...(Array.isArray(place.subtype) ? place.subtype : [place.subtype]),
+    place.business_category,
+    place.business_type,
+    place.residence_type,
+    ...(Array.isArray(place.business_types)
+      ? place.business_types.map((t) => `${t?.category || ''} ${t?.type || ''}`)
+      : []),
+  ].filter(Boolean).map(normalize);
+  return `${String(place.venue_identity || '')} ${String(place.name || '')} ${types.join(' ')}`.toLowerCase();
+}
 
-  const subtypes = (Array.isArray(location.subtype) ? location.subtype : [location.subtype])
-    .filter(Boolean)
-    .map(normalize);
-  if (subtypes.includes('courthouse')) return 'courthouse';
-  if (subtypes.includes('city_hall')) return 'city_hall';
+function venueTypeFrom(identity) {
+  if (identity.includes('city hall') || identity.includes('cityhall') || identity.includes('city_hall')) return 'city_hall';
+  if (identity.includes('courthouse') || identity.includes('court house') || identity.includes('court_house')) return 'courthouse';
   return null;
+}
+
+/**
+ * 'courthouse' | 'city_hall' | null for the destination actually selected.
+ *
+ * `space` is the residence or workplace the scene is in, when one is selected: it is the
+ * destination, so only its own identity decides. A parent location that holds
+ * independently functioning venues is never itself a courthouse or City Hall just because
+ * one of the places inside it is — being somewhere inside Briarwick City is not being at
+ * its City Hall. Its own type list describes what it contains, not what it is.
+ *
+ * A venue that carries both subtypes (a City Hall that also holds a courthouse) is the
+ * place its own name says it is, so its visit opens the right setup.
+ */
+export function getGovernmentVenueType(location, space = null) {
+  if (!location) return null;
+  if (space) return venueTypeFrom(identityOf(space));
+  if (location.parent_location_type) return null;
+  return venueTypeFrom(identityOf(location));
 }
 
 /** Actions whose selection opens a setup or confirmation flow instead of a plain scene line. */
