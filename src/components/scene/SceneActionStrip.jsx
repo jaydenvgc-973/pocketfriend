@@ -101,6 +101,9 @@ export default function SceneActionStrip({
   inRide = false,
   onArriveAtDestination,
   rideDestinationName = null,
+  // The four character commands. Each one asks WHO from the people who are here, then
+  // runs the existing sleep / presence / workplace functionality for exactly those people.
+  onCharacterCommand = null,
 }) {
   const baseList = stripActions(courtCase
     ? actions.filter((a) => !getCourtActionAuthority(a.id) || courtActors(courtCase, a.id).length > 0)
