@@ -242,6 +242,8 @@ export function buildCourtCaseContext(courtCase, { userPresent = true, userName 
   lines.push('════════════════════════════════════');
   lines.push(`Case type: ${courtCaseTypeLabel(courtCase.case_type)}`);
   if (courtCase.description) lines.push(`The case is about: ${courtCase.description}`);
+  lines.push('• This proceeding is whatever stage it has actually reached: an initial appearance, an arraignment, a bail or detention hearing, a preliminary hearing, a pretrial matter, a plea, a trial, a sentencing or a post-trial matter. The stage is read from what has already happened in this room, and the scene continues from there.');
+  lines.push('• A proceeding that is not a trial never turns into one: an initial appearance addresses charges, rights, representation and custody; an arraignment takes the plea; a bail hearing decides release conditions or continued detention; a preliminary hearing decides whether the case proceeds; a pretrial matter resolves motions and evidence disputes; a plea hearing takes the plea; a sentencing hearing sentences. Never open a trial, seat a jury or call witnesses in a proceeding that is not a trial.');
   const assignments = courtCase.assignments || [];
   const remoteAssignments = assignments.filter((a) => a.remote);
   const inRoom = assignments.filter((a) => !a.remote);
@@ -321,16 +323,20 @@ export function buildCourtCaseContext(courtCase, { userPresent = true, userName 
   lines.push('PRESENCE IS NOT SPEAKING:');
   lines.push('• A juror listens to testimony, a witness waits to be called, a defendant may stay silent while an attorney speaks, and the judge may simply listen. That is full participation.');
   lines.push('• Never have everyone present speak at once, and never treat someone who has not spoken as absent from the room.');
+  lines.push('• A participant may stay silent for an entire proceeding and still be fully present. Silence is never a cue for another character to speak for them, and no one is given a turn just to keep the conversation balanced.');
   lines.push('');
   lines.push('RULES:');
   lines.push('• Everyone keeps the role listed above for the whole proceeding. A witness never becomes the prosecutor; a juror never becomes the judge; the judge stays the judge.');
   lines.push('• Speak about the actual case described above. Never substitute a different trial, charge, or dispute.');
   lines.push('• This is one continuing proceeding. Every continuation builds on what has already happened in this room — it never restarts the case, never repeats its opening, and never drifts into a different case.');
   lines.push('• Testimony comes only from what a person actually knows: their own memories and lived experience. Someone who did not witness an event does not gain firsthand knowledge by being called as a witness. Accounts may be incomplete, mistaken or in conflict, and are shown that way.');
+  lines.push('• A witness called by one side is not that side\'s advocate. They answer from their own knowledge and may say something that helps the other side. Testimony is never shaped to please whoever called the witness, and no witness is given knowledge, qualifications or expertise they do not actually have. "I don\'t know", "I don\'t remember" and "I didn\'t see that" are complete answers.');
+  lines.push('• Only what is said in the room and admitted by the court counts. Excluded, stricken or never-presented information is not used by the judge or the jury to decide anything, and no participant quietly knows another person\'s private memories because they share a courtroom.');
   lines.push('• The case description is the court\'s framing of the matter, not personal knowledge. Nobody acquires private facts from it: the judge and attorneys understand the procedure, not another person\'s secrets, and jurors weigh only what is presented in the room.');
   lines.push('• Starting or attending a case decides nothing. Only the explicitly selected Sentencing action produces a sentence, and only after the user confirms it.');
   lines.push('• An acquittal, dismissal, adjournment, civil ruling or settlement is a valid outcome and never becomes a conviction.');
   lines.push('• Sentencing, contempt and custody are consequences of the case, not of anyone being present in the building.');
+  lines.push('• The user may speak as any character, including one whose turn it is not. That line is real and is heard in the room. If it breaks procedure — a defendant calling out, an attorney speaking without being recognized, an objection raised — the judge and the room respond to it as what it is, and the proceeding continues from there. Nothing the user does is ignored or blocked.');
   lines.push('════════════════════════════════════');
   return lines.join('\n');
 }
