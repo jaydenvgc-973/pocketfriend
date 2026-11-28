@@ -94,9 +94,18 @@ function dayMapToSchedule(map) {
 function studentAcademicSchedule(char, location) {
   if (!char || !location) return [];
   const entries = Array.isArray(char.education_enrollments) ? char.education_enrollments : [];
-  const entry = entries.find((e) => e && e.status === 'active'
+  const forSchool = entries.filter((e) => !!e
     && (e.location_id === location.id || e.in_person_location_id === location.id));
-  return entry && Array.isArray(entry.academic_schedule) ? entry.academic_schedule : [];
+  const hasDays = (e) => Array.isArray(e.academic_schedule)
+    && e.academic_schedule.some((d) => d && d.start_time && d.end_time);
+  // The active record is this student's enrollment. A schedule established before an
+  // earlier drop/re-enroll still belongs to the same student at the same school, so it is
+  // shown instead of reporting "no classes" while it sits on the older record.
+  const active = forSchool.find((e) => e.status === 'active');
+  if (active && hasDays(active)) return active.academic_schedule;
+  const withDays = forSchool.find(hasDays);
+  if (withDays) return withDays.academic_schedule;
+  return active && Array.isArray(active.academic_schedule) ? active.academic_schedule : [];
 }
 
 function formatClassTime(time) {
@@ -313,6 +322,9 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
   // Per-student edit state
   const [editingStudentId, setEditingStudentId] = useState(null);
   const [editFields, setEditFields] = useState({});
+  // A save that fails must say so. A rejected write used to disappear silently, which
+  // looks exactly like "the schedule did not save".
+  const [saveError, setSaveError] = useState('');
 
   const startEdit = (student) => {
     setEditingStudentId(student.character_id);
@@ -1014,8 +1026,18 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
                           <p className="text-xs text-muted-foreground">Non-residential school — students always live at their own home.</p>
                         </div>
                       )}
+                      {saveError && (
+                        <p className="text-xs text-destructive bg-destructive/10 rounded-lg px-2 py-1.5">{saveError}</p>
+                      )}
                       <div className="flex gap-2">
-                        <Button size="sm" onClick={() => saveEdit(student)} className="flex-1 h-7 text-xs rounded-lg gap-1">
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            setSaveError('');
+                            saveEdit(student).catch(err => setSaveError(err?.message || 'Could not save this student'));
+                          }}
+                          className="flex-1 h-7 text-xs rounded-lg gap-1"
+                        >
                           <Check className="w-3 h-3" /> Save
                         </Button>
                         <Button size="sm" variant="outline" onClick={cancelEdit} className="h-7 px-2 rounded-lg">
