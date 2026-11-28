@@ -29,21 +29,16 @@ import { resolveSceneZone } from "@/lib/sceneSpaceZone";
 import { publishSceneImageFailure, publishSceneImageSuccess } from "@/lib/sceneImageFailure";
 
 /**
- * A moment that belongs to the people in it alone — an embrace, a confrontation, a private
- * conversation between two people — never gains a crowd behind them, whatever the venue.
- * The activity prompts already state it in their own words; this reads that statement so
- * the picture keeps it.
- */
-const PRIVATE_MOMENT_PROMPT = /\b(alone together|unclothed|kissing|physically fighting|private embrace)\b/i;
-
-/**
- * Remove only an activity's "no other people" clause. The clause emptied public venues; it
- * was never part of what the activity is. Everything else in the prompt — the action, the
- * objects it needs, its atmosphere — is left exactly as written.
+ * Remove only the exact "no other people" statement an activity prompt ends with. It only
+ * ever meant "nobody but the cast is identifiable"; it was never a statement that a bar, a
+ * diner or a waiting room is empty. Only these exact statements are removed — every other
+ * word of the activity prompt, including any privacy, safety, identity or location
+ * constraint, is left exactly as written.
  */
 function stripNoOtherPeopleClause(prompt) {
   return String(prompt || "")
-    .replace(/\s*No (?:other people|strangers or extra people|strangers|extra people|one else)\b[^.]*\./gi, "")
+    .replace(/\s*No other people(?:, no coworkers)?\./gi, "")
+    .replace(/\s*No strangers(?: or extra people)?\./gi, "")
     .trim();
 }
 
@@ -307,11 +302,13 @@ export function useSceneImageGenerator({ transcript = [], getActiveSpace = null 
     // student residence — is never populated with strangers merely because the school
     // around it has ambient students. The shared school zones are unaffected.
     const privateLivingSpace = isPrivateResidentialZone(location, activeZone);
-    // A selected cast is the principal cast of the picture — it is not the whole population
-    // of the place. A public venue keeps its ordinary staff and patrons behind them, exactly
-    // as a populated room does; a home, a restricted area and a private living space never
-    // do. This restores the room's people without changing who the picture is about.
-    const allowBackgroundExtras = ambientList.length > 0 && !isHomeLocation && !isRestrictedEnv && !privateLivingSpace;
+    // The environment itself decides whether ordinary people belong here: a home, a
+    // restricted area and a private living space never have them; every other place keeps
+    // its own people — its staff and its patrons — whatever the selected people are doing
+    // and however few of them are selected. Selection decides participation, never
+    // population, and a selected cast is not the whole population of a place.
+    const venueAllowsAmbient = !isHomeLocation && !isRestrictedEnv && !privateLivingSpace;
+    const allowBackgroundExtras = ambientList.length > 0 && venueAllowsAmbient;
     // ⛔ Background people are NEVER named in the prompt. A name makes them a named subject
     // competing for the supplied reference images — that is how a random student, teacher,
     // or bartender could end up rendered in place of the actual character. They are
@@ -338,7 +335,7 @@ export function useSceneImageGenerator({ transcript = [], getActiveSpace = null 
       ? ` This place's own established description decides who its ordinary people are: "${spaceDescriptionText}" Let it set the typical clientele, the staff who serve them, how those people are dressed, what they are doing, the social atmosphere and energy of the room, and how busy or quiet it feels — read together with what kind of place this is, the time of day and what is happening right now. The background people must look and behave like the people this description establishes, never a generic crowd. It describes the place and its usual visitors only: it never changes a named person's face, body type, hairstyle, clothing, personality or identity, and the named people are individuals here who need not resemble the usual crowd.`
       : '';
     const ambientRule = allowBackgroundExtras
-      ? ` The venue is populated as it really is right now by ordinary background people: ${ambientText}. They are anonymous strangers with no name, no identity, and NO reference images — none of the reference images supplied with this request belongs to any of them. They fill the room behind the named subjects in a natural, believable number for this kind of place at this hour — a few in a waiting room, a real crowd in a busy nightclub — always at a distance and softly out of focus: never in the foreground, never in the center, never obscuring, standing in for or replacing a named subject, and never the subject of the photograph.${crowdDescriptionRule}`
+      ? ` The venue is populated as it really is right now by ordinary background people: ${ambientText}. Those are kinds of people, never a maximum count: draw the number this place actually holds at this hour — a few in a quiet waiting room, a real crowd in a busy nightclub. They are anonymous strangers with no name, no identity, and NO reference images — none of the reference images supplied with this request belongs to any of them. They stand and move where the place and the moment naturally put them, at whatever distance and position the scene requires: a bartender behind the counter or reaching into the foreground to hand over a drink, a barber or examiner close beside the person they are serving, a passer-by crossing near the subject. They may be fully visible, partly visible, or only their hands, arms or other naturally framed parts in the frame. What keeps them background is their visual importance, not their distance: they never replace, obscure or stand in for a named subject, never inherit a named subject's face, body type or clothing, never take over an action assigned to a named subject, never cause a named subject to be left out of the frame, and are never the subject of the photograph.${crowdDescriptionRule}`
       : '';
     // ── BACKGROUND IDENTITY SEPARATION ──
     // A background person of the venue is a DIFFERENT person with their own face and
@@ -349,26 +346,28 @@ export function useSceneImageGenerator({ transcript = [], getActiveSpace = null 
       ? ` ⛔ BACKGROUND PEOPLE ARE SEPARATE IDENTITIES, NOT THE NAMED PEOPLE: ${focusNames.join(', ')} ${focusNames.length === 1 ? 'is' : 'are'} a specific ${focusNames.length === 1 ? 'person' : 'people'} whose face comes only from ${focusNames.length === 1 ? 'their own reference images' : 'their own reference images'}. The background people are unrelated strangers with different faces — never ${focusNames.join(' or ')}, never a version of ${focusNames.length === 1 ? 'them' : 'them'}, never a look-alike, never ${focusNames.length === 1 ? 'their' : 'their'} replacement. If a background face would be mistaken for ${focusNames.length === 1 ? 'them' : 'any of them'}, that background person is wrong.`
       : '';
     const primaryFocusRule = focusNames.length > 0
-      ? ` PRIMARY SUBJECT (mandatory): ${focusNames.join(' and ')} ${focusNames.length === 1 ? 'is' : 'are'} the subject of this photograph. ${focusNames.length === 1 ? 'They are' : 'They are all'} present in the frame — close to medium framing, centered, clearly visible, faces unobscured, in the sharpest focus and the brightest light, rendered from ${focusNames.length === 1 ? 'their' : 'their'} own reference image${focusNames.length === 1 ? '' : 's'} — those references are supplied for ${focusNames.length === 1 ? 'them' : 'them'} alone and may never be given to anyone else in the frame. ⛔ No named participant may be omitted, and none may be exchanged for a background person. No background person outranks them in size, position, sharpness, or focus.${backgroundSeparationRule}`
+      ? ` PRIMARY SUBJECT (mandatory): ${focusNames.join(' and ')} ${focusNames.length === 1 ? 'is' : 'are'} the subject of this photograph. ${focusNames.length === 1 ? 'They are' : 'They are all'} present in the frame — close to medium framing, centered, clearly visible, faces unobscured, in the sharpest focus and the brightest light, rendered from ${focusNames.length === 1 ? 'their' : 'their'} own reference image${focusNames.length === 1 ? '' : 's'} — those references are supplied for ${focusNames.length === 1 ? 'them' : 'them'} alone and may never be given to anyone else in the frame. ⛔ No named participant may be omitted, and none may be exchanged for a background person. No background person outranks them in visual importance, size, sharpness or focus, and none may take their place as the subject — their being close by or partly in front is natural composition, not importance.${backgroundSeparationRule}`
       : '';
 
     // If an action triggered this, use the action's specific prompt
     if (actionOverridePrompt) {
       // ── THE ROOM'S OWN PEOPLE STAY WHILE THE ACTIVITY HAPPENS ──
-      // An activity's "no other people" clause only ever meant "nobody but the cast is
-      // identifiable" — it was never a statement that a bar, diner or waiting room is
-      // empty. Where the place is genuinely public, its ordinary people remain behind the
-      // cast. A private moment between the people in it, a home, a restricted area and a
-      // private living space keep the picture to its cast exactly as before.
-      const activityMomentIsPrivate = PRIVATE_MOMENT_PROMPT.test(String(actionOverridePrompt));
-      const activityAllowsAmbient = allowBackgroundExtras && !activityMomentIsPrivate;
+      // The place, its zone and its established circumstances decide whether ordinary people
+      // are there — never the activity. A kiss, a fight, an embrace or a private conversation
+      // happens in the room as it really is, with the room's own people still in it. Only a
+      // home, a restricted area and a private living space keep the picture to its cast.
+      const activityAllowsAmbient = venueAllowsAmbient;
       let finalPrompt = activityAllowsAmbient
         ? stripNoOtherPeopleClause(actionOverridePrompt)
         : actionOverridePrompt;
       // An activity never widens the cast: the selected participants stay the only
       // identifiable people in the picture.
       if (finalParticipants.length === 0) {
-        finalPrompt += ` CRITICAL: This space is empty. There are absolutely NO people in this image — no humans, no silhouettes, no background figures, no one. Only the room/space itself.`;
+        // A place that holds people is the subject itself when nobody is selected — it is
+        // never described as an empty room. Only a place that genuinely has nobody in it is.
+        finalPrompt += venueAllowsAmbient
+          ? ` CRITICAL: No named person is the subject of this picture — the place itself is. Its ordinary people are present exactly as the environment and its description establish.`
+          : ` CRITICAL: This space is empty. There are absolutely NO people in this image — no humans, no silhouettes, no background figures, no one. Only the room/space itself.`;
       } else {
         finalPrompt += activityAllowsAmbient
           ? ` CRITICAL: Only these people are identifiable: ${finalParticipants.map((c) => c.name).join(", ")} — each one present exactly once, never duplicated, never replaced by an invented or background person, and none may be omitted.`
@@ -481,7 +480,7 @@ export function useSceneImageGenerator({ transcript = [], getActiveSpace = null 
         // A selected cast is never diluted: "among other patrons" invited invented people
         // into a picture the user had already cast.
         const peopleDesc = charNames
-          ? `${charNames} as the clear main subject of the frame${allowBackgroundExtras ? `, with ordinary patrons of this place kept as distant, out-of-focus background` : ""}`
+          ? `${charNames} as the clear main subject of the frame${allowBackgroundExtras ? `, with this place's ordinary patrons and staff naturally present around them` : ""}`
           : "with other people around";
         const _diversityDirective = getBackgroundPopulationDiversityDirective();
         prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}.${namedSubjectsRule(finalParticipants)}${primaryFocusRule}${allowBackgroundExtras ? ambientRule : ''}${userAppearanceBlock}${sealedBundles}${_diversityDirective}${buildSleepDescriptor(finalParticipants)}${timeLock} Photorealistic.`;
@@ -491,7 +490,9 @@ export function useSceneImageGenerator({ transcript = [], getActiveSpace = null 
         const restrictedPrefix = isRestrictedEnv ? ` This is a restricted/private area (e.g. stockroom, backstage, office, break room).` : '';
         const peopleDesc = (finalParticipants.length > 0 ?
           `Only these specific people are present: ${finalParticipants.map((c) => c.name).join(", ")}. No other people, no strangers, no background figures.` :
-          `The space is completely empty — no silhouettes, no background figures, nobody.`) + restrictedPrefix;
+          venueAllowsAmbient
+            ? `No named person is the subject — the place itself is, with its ordinary people present exactly as the environment and its description establish.`
+            : `The space is completely empty — no silhouettes, no background figures, nobody.`) + restrictedPrefix;
         prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}${primaryFocusRule}${userAppearanceBlock}${sealedBundles}${buildSleepDescriptor(finalParticipants)}${timeLock} Photorealistic.`;
       }
     }
