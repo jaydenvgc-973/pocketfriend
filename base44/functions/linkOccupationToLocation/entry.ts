@@ -60,9 +60,18 @@ Deno.serve(async (req) => {
             worker_job_titles: newTitles,
           });
         } else if (linkType === 'education') {
-          const newWorkers = (oldLoc.worker_character_ids || []).filter(id => id !== characterId);
+          // Leaving a school removes the enrollment — never a worker entry, because
+          // enrollment was never a job in the first place.
+          const isStudentTitle = (t: unknown) => /^student\b/i.test(String(t || '').trim());
+          const newWorkers = (oldLoc.worker_character_ids || []).filter(
+            (id: string) => id !== characterId || !isStudentTitle(oldLoc.worker_job_titles?.[id])
+          );
+          const newTitles = { ...(oldLoc.worker_job_titles || {}) };
+          if (isStudentTitle(oldLoc.worker_job_titles?.[characterId])) delete newTitles[characterId];
           await base44.asServiceRole.entities.LocationReference.update(removeLocationId, {
             worker_character_ids: newWorkers,
+            worker_job_titles: newTitles,
+            enrolled_students: (oldLoc.enrolled_students || []).filter((s: any) => s?.character_id !== characterId),
           });
         }
       }
@@ -104,18 +113,49 @@ Deno.serve(async (req) => {
       }
 
     } else if (linkType === 'education') {
-      // Add as a "student/attendee" worker entry — we reuse worker_character_ids with title = program name
-      const existingWorkers = location.worker_character_ids || [];
-      const alreadyWorker = existingWorkers.includes(characterId);
+      // ENROLLMENT IS NOT EMPLOYMENT. A student belongs in the school's enrolled_students
+      // (and the character's own education fields) — never in the worker roster, where a
+      // "Student" title turns enrollment into a job with hours.
+      const isStudentTitle = (t: unknown) => /^student\b/i.test(String(t || '').trim());
 
-      const updatedWorkers = alreadyWorker ? existingWorkers : [...existingWorkers, characterId];
+      const updatedWorkers = (location.worker_character_ids || []).filter(
+        (id: string) => id !== characterId || !isStudentTitle(location.worker_job_titles?.[id])
+      );
       const updatedTitles = { ...(location.worker_job_titles || {}) };
-      if (title) updatedTitles[characterId] = `Student: ${title}`;
-      else updatedTitles[characterId] = 'Student';
+      const updatedRates = { ...(location.worker_pay_rates || {}) };
+      const updatedTypes = { ...(location.worker_pay_type || {}) };
+      const updatedShifts = { ...(location.worker_shifts || {}) };
+      // A real employee who also studies here keeps their job entry untouched.
+      if (isStudentTitle(location.worker_job_titles?.[characterId])) {
+        delete updatedTitles[characterId];
+        delete updatedRates[characterId];
+        delete updatedTypes[characterId];
+        delete updatedShifts[characterId];
+      }
+
+      const enrolled = Array.isArray(location.enrolled_students) ? location.enrolled_students : [];
+      const alreadyEnrolled = enrolled.some(
+        (s: any) => s?.character_id === characterId && s?.status !== 'dropped' && s?.status !== 'graduated'
+      );
+      const updatedEnrolled = alreadyEnrolled
+        ? enrolled
+        : [...enrolled, {
+            character_id: characterId,
+            character_name: character.name,
+            tuition_amount: 0,
+            scholarship_enabled: false,
+            enroll_date: new Date().toISOString(),
+            status: 'active',
+            ...(title ? { course_name: title } : {}),
+          }];
 
       await base44.asServiceRole.entities.LocationReference.update(locationId, {
         worker_character_ids: updatedWorkers,
         worker_job_titles: updatedTitles,
+        worker_pay_rates: updatedRates,
+        worker_pay_type: updatedTypes,
+        worker_shifts: updatedShifts,
+        enrolled_students: updatedEnrolled,
       });
     }
 

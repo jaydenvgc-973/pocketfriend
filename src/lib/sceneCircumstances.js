@@ -40,6 +40,8 @@ function worksHere(person, location) {
   if (person.occupation_location_id === location.id) return true;
   if (person.current_work_location_id === location.id) return true;
   if ((person.additional_occupation_locations || []).some((a) => a?.location_id === location.id)) return true;
+  // A student roster entry is an enrollment, not a job.
+  if (/^student\b/i.test(String(location.worker_job_titles?.[person.id] || '').trim())) return false;
   if (location.worker_shifts?.[person.id]) return true;
   return false;
 }
@@ -51,7 +53,8 @@ function worksHere(person, location) {
 function onShiftHere(person, location, onShiftIds) {
   if (onShiftIds?.has?.(person.id)) return true;
   if (person.sceneRole === 'on-shift employee') return true;
-  if (location?.worker_shifts?.[person?.id] && isCharacterOnShift(person.id, location)) return true;
+  const studentRosterEntry = /^student\b/i.test(String(location?.worker_job_titles?.[person?.id] || '').trim());
+  if (!studentRosterEntry && location?.worker_shifts?.[person?.id] && isCharacterOnShift(person.id, location)) return true;
   const occupationLinkedHere = person?.occupation_location_id === location?.id
     || (person?.additional_occupation_locations || []).some((a) => a?.location_id === location?.id);
   // Only a character whose own employment record points at THIS place is judged by

@@ -112,7 +112,8 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
   const workerIdsFromTitles = Object.keys(location.worker_job_titles || {});
   const workerIdsFromShifts = Object.keys(location.worker_shifts || {});
   const workerIdsMerged = Array.from(new Set([...workerIdsFromArray, ...workerIdsFromTitles, ...workerIdsFromShifts]));
-  const workerIds = workerIdsMerged;
+  // A student roster entry is an enrollment, not a job: students belong under Enrolled Students.
+  const workerIds = workerIdsMerged.filter(id => !/^student\b/i.test(String(location.worker_job_titles?.[id] || '').trim()));
 
   // A Generic parent's authority roles follow what the parent is: a city has a mayor, a
   // building has an owner or property manager. Every other place is unchanged.

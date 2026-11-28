@@ -188,6 +188,8 @@ export function resolveEmployment(character, locationList = []) {
   // ── 3. LOCATION WORKER LIST (catch any jobs on locations not yet on the character) ──
   for (const loc of locationList) {
     if (!(loc.worker_character_ids || []).includes(character.id)) continue;
+    // A student roster entry is an enrollment, not a job — it never becomes an income source.
+    if (/^student\b/i.test(String(loc.worker_job_titles?.[character.id] || '').trim())) continue;
     // Skip if already covered above
     const alreadyCovered =
       character.occupation_location_id === loc.id ||

@@ -270,6 +270,9 @@ export default function CharacterProfile() {
 
       const addLoc = (loc) => {
         if (!loc || seen.has(loc.id)) return;
+        // A student roster entry is an enrollment, not an income source.
+        const studentTitle = /^student\b/i.test(String(loc.worker_job_titles?.[characterId] || '').trim());
+        if (studentTitle && !locationIds.has(loc.id)) return;
         seen.add(loc.id);
         combined.push(loc);
       };
